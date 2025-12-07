@@ -1,71 +1,249 @@
-# pkgsense README
+# pkgsense - Package Intelligence for VS Code
 
-This is the README for your extension "pkgsense". After writing up a brief description, we recommend including the following sections.
+**pkgsense** is an essential VS Code extension for any Node.js project, offering deep and intelligent insights into your `package.json` file. Transform your package configuration into an interactive dashboard with real-time diagnostics, ensuring your project is robust, efficient, and always up-to-date.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+### Real-time Package Analysis
 
-For example if there is an image subfolder under your extension project workspace:
+pkgsense automatically analyzes your `package.json` file and provides instant feedback through VS Code diagnostics:
 
-\!\[feature X\]\(images/feature-x.png\)
+- **Deprecated Package Detection**: Identifies deprecated or unmaintained packages (like `moment`, `request`, `left-pad`) with recommended alternatives
+- **Bundle Size Analysis**: Fetches real-time package sizes from Bundlephobia API and warns about heavy dependencies
+- **Vulnerability Scanning**: Integrates with `npm audit` to detect security vulnerabilities in your dependencies
+- **Best Practices**: Checks for missing or misconfigured fields like `files`, `type`, and `test` scripts
+- **Duplicate Detection**: Identifies packages listed in both `dependencies` and `devDependencies`
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+### Diagnostic Severity Levels
+
+- **Error** (🔴): Critical issues like very large packages (>1MB) or security vulnerabilities
+- **Warning** (🟡): Important issues like deprecated packages or moderately heavy dependencies (>200KB)
+- **Info** (ℹ️): Suggestions for improvement like missing fields or best practice recommendations
+
+## Installation
+
+### From VSIX (Development)
+
+1. Download the latest `.vsix` file from releases
+2. Open VS Code
+3. Go to Extensions view (Ctrl+Shift+X / Cmd+Shift+X)
+4. Click the "..." menu → "Install from VSIX..."
+5. Select the downloaded file
+
+### From Source
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd pkgsense
+
+# Install dependencies
+pnpm install
+
+# Build the extension
+pnpm run compile
+
+# Package the extension (optional)
+pnpm vsce package
+```
+
+## Usage
+
+### Automatic Analysis
+
+pkgsense automatically activates when you open a `package.json` file. Analysis runs on:
+
+- File open
+- File save
+- File changes (while editing)
+
+### Manual Analysis
+
+You can manually trigger analysis using the command palette:
+
+1. Open Command Palette (Ctrl+Shift+P / Cmd+Shift+P)
+2. Type "Analyze package.json"
+3. Press Enter
+
+Alternatively, use the command ID: `pkgsense.analyze`
+
+## Configuration
+
+Currently, pkgsense works out of the box with no configuration required. The extension uses sensible defaults:
+
+- Package size thresholds:
+  - Large: >1MB (Error)
+  - Medium: >200KB (Warning)
+  - Small: >50KB (Info)
+- npm audit timeout: 30 seconds
+- Bundlephobia API timeout: 5 seconds
 
 ## Requirements
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+- **VS Code**: Version 1.106.1 or higher
+- **Node.js**: Recommended version 16+ (for `npm audit` integration)
+- **npm**: Required for vulnerability scanning
 
-## Extension Settings
+## Extension Architecture
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+pkgsense follows a modular analyzer architecture:
 
-For example:
+```
+┌──────────────────────────────────────┐
+│         package.json File            │
+└──────────────┬───────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────┐
+│       Analysis Manager               │
+│  (Orchestrates parallel analysis)    │
+└──────┬───────┬───────┬───────────────┘
+       │       │       │
+       ▼       ▼       ▼
+   ┌────┐  ┌────┐  ┌────┐
+   │ H  │  │ W  │  │ V  │  Analyzers
+   └─┬──┘  └─┬──┘  └─┬──┘
+     │       │       │
+     └───────┴───────┘
+             │
+             ▼
+   ┌─────────────────────┐
+   │ Diagnostics Manager │
+   │  (VS Code UI)       │
+   └─────────────────────┘
+```
 
-This extension contributes the following settings:
+**Analyzers:**
+- **H**: Heuristics Analyzer (deprecated packages, missing fields, best practices)
+- **W**: Weight Analyzer (bundle sizes via Bundlephobia API)
+- **V**: Vulnerability Analyzer (npm audit integration)
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+## Development
+
+### Project Structure
+
+```
+pkgsense/
+├── src/
+│   ├── analyzers/          # Analysis logic
+│   │   ├── manager.ts      # Orchestrates analyzers
+│   │   ├── heuristicsAnalyzer.ts
+│   │   ├── weightAnalyzer.ts
+│   │   ├── vulnerabilityAnalyzer.ts
+│   │   └── types.ts        # Shared analyzer types
+│   ├── decorators/         # VS Code integration
+│   │   └── diagnostics.ts  # Diagnostic management
+│   ├── shared/             # Shared utilities
+│   │   ├── constants.ts    # Configuration constants
+│   │   └── result.ts       # Result type for error handling
+│   ├── utils/              # External API clients
+│   │   └── bundlephobia.ts
+│   ├── types.ts            # Core type definitions
+│   └── extension.ts        # Extension entry point
+├── package.json
+├── tsconfig.json
+└── README.md
+```
+
+### Build Commands
+
+```bash
+# Development
+pnpm run compile        # Compile TypeScript
+pnpm run watch          # Watch mode for development
+
+# Quality
+pnpm run lint           # Run Biome linter
+pnpm run format         # Format code with Biome
+
+# Testing
+pnpm run test           # Run tests (includes compile + lint)
+pnpm run pretest        # Pre-test setup
+
+# Publishing
+pnpm run vscode:prepublish  # Prepare for publishing
+```
+
+### Code Quality Standards
+
+The project follows strict coding standards documented in `CLAUDE.md`:
+
+- **SOLID Principles**: Single Responsibility, Open/Closed, Dependency Inversion
+- **Type Safety**: Strict TypeScript with no `any` types, exhaustive pattern matching
+- **Error Handling**: Result pattern for explicit error handling
+- **Function Complexity**: Max 50 lines per function, max 3 nesting levels
+- **Pure Functions**: Prefer stateless, side-effect-free functions
+
+### Adding a New Analyzer
+
+1. Create a new analyzer file in `src/analyzers/`
+2. Implement the `Analyzer` interface from `types.ts`
+3. Create a factory function following the existing pattern
+4. Add to `createDefaultAnalyzers()` in `manager.ts`
+5. Write tests for your analyzer
+
+Example:
+
+```typescript
+export function createMyAnalyzer(): Analyzer {
+  return {
+    name: 'my-analyzer',
+    async analyze(context: AnalysisContext) {
+      const findings: Finding[] = [];
+      // Your analysis logic here
+      return success(findings);
+    },
+  };
+}
+```
 
 ## Known Issues
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+- Sequential API calls to Bundlephobia (performance optimization pending)
+- No caching of API responses (may hit rate limits with large dependency lists)
+- Requires `npm` to be installed for vulnerability scanning
 
-## Release Notes
+## Roadmap
 
-Users appreciate release notes as you update your extension.
+- [ ] Add caching for Bundlephobia API responses
+- [ ] Implement rate limiting for external API calls
+- [ ] Add configuration options for thresholds
+- [ ] Support for alternative package managers (yarn, pnpm)
+- [ ] Quick fixes and code actions for common issues
+- [ ] Package update suggestions
+- [ ] License compatibility checking
 
-### 1.0.0
+## Contributing
 
-Initial release of ...
+Contributions are welcome! Please ensure:
 
-### 1.0.1
+1. All tests pass: `pnpm test`
+2. Code is formatted: `pnpm run format`
+3. No linting errors: `pnpm run lint`
+4. TypeScript compiles without errors: `pnpm run compile`
+5. Follow the coding standards in `CLAUDE.md`
 
-Fixed issue #.
+## Security
 
-### 1.1.0
+pkgsense takes security seriously:
 
-Added features X, Y, and Z.
+- ✅ No shell injection vulnerabilities (uses `execFile` instead of `exec`)
+- ✅ Input validation on all external data
+- ✅ Timeout protection on all external API calls
+- ✅ Sandboxed npm audit execution
+
+Found a security issue? Please report it privately via GitHub Security Advisories.
+
+## License
+
+See [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- [Bundlephobia](https://bundlephobia.com/) for package size data
+- [npm](https://www.npmjs.com/) for vulnerability scanning
+- VS Code team for the excellent extension API
 
 ---
 
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+**Made with ❤️ for the Node.js community**

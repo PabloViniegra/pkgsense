@@ -3,11 +3,23 @@
 	"displayName": "pkg Sense",
 	"description": "Is the essential extension for any Node.js project, offering deep and intelligent insight into your package.json file. Forget the uncertainty about your dependencies. Transform your main configuration file into an interactive dashboard, ensuring your project is robust, efficient, and always up-to-date.",
 	"version": "1.0.0",
+	"publisher": "PabloViniegra",
+	"license": "MIT",
+	"icon": "public/logo.png",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/PabloViniegra/pkgsense.git"
+	},
 	"engines": {
 		"vscode": "^1.106.1"
 	},
-	"categories": ["Other"],
-	"activationEvents": ["onLanguage:json"],
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onLanguage:json",
+		"onCommand:pkgsense.analyze"
+	],
 	"main": "./out/extension.js",
 	"contributes": {
 		"commands": [
@@ -18,13 +30,18 @@
 		]
 	},
 	"scripts": {
-		"vscode:prepublish": "pnpm run compile",
+		"vscode:prepublish": "pnpm run esbuild-prod",
+		"esbuild-prod": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --minify",
+		"esbuild": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+		"esbuild-watch": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
 		"compile": "tsc -p ./",
 		"watch": "tsc -watch -p ./",
 		"pretest": "pnpm run compile && pnpm run lint",
 		"lint": "biome lint .",
-		"format": "biome format .",
-		"test": "vscode-test"
+		"format": "biome format --write .",
+		"test": "vscode-test",
+		"package": "vsce package --no-dependencies",
+		"publish": "vsce publish"
 	},
 	"dependencies": {
 		"node-fetch": "2.6.7"
@@ -37,6 +54,8 @@
 		"@types/vscode": "^1.106.1",
 		"@vscode/test-cli": "^0.0.12",
 		"@vscode/test-electron": "^2.5.2",
+		"@vscode/vsce": "^3.2.1",
+		"esbuild": "^0.27.1",
 		"eslint": "^9.39.1",
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.48.1"

@@ -1,73 +1,180 @@
-import type { Finding, PackageJson } from '../types';
+import { success } from '../shared/result';
+import { FINDING_TAGS, type Finding, type PackageJson } from '../types';
+import type { Analyzer, AnalysisContext } from './types';
 
-const replacements = [
+/**
+ * Configuration for deprecated package detection.
+ * Extracted to enable easy extension and configuration.
+ */
+interface DeprecatedPackageRule {
+	readonly pkg: string;
+	readonly suggestion: string;
+}
+
+const DEPRECATED_PACKAGES: readonly DeprecatedPackageRule[] = [
 	{
 		pkg: 'moment',
 		suggestion:
-			'Considera usar dayjs o luxon (moment está en modo mantenimiento).',
+			'Consider using dayjs or luxon (moment is in maintenance mode).',
 	},
-	{ pkg: 'request', suggestion: 'request está deprecated; usa fetch o axios.' },
-	{ pkg: 'left-pad', suggestion: 'Paquete innecesario.' },
-];
+	{
+		pkg: 'request',
+		suggestion: 'request is deprecated; use fetch or axios instead.',
+	},
+	{
+		pkg: 'left-pad',
+		suggestion: 'Unnecessary package.',
+	},
+] as const;
 
-export async function heuristicsAnalyzer(
-	json: PackageJson,
-	allDeps: Record<string, string>,
-): Promise<Finding[]> {
+/**
+ * Check for deprecated or problematic packages.
+ * Pure function - no side effects.
+ */
+function checkDeprecatedPackages(
+	allDeps: Readonly<Record<string, string>>,
+): Finding[] {
 	const findings: Finding[] = [];
 
-	for (const r of replacements) {
-		if (allDeps[r.pkg]) {
+	for (const rule of DEPRECATED_PACKAGES) {
+		if (allDeps[rule.pkg]) {
 			findings.push({
 				type: 'warning',
-				message: `Dependencia obsoleta detectada: ${r.pkg}. ${r.suggestion}`,
-				dependency: r.pkg,
-				tags: ['maintenance', 'replacement'],
+				message: `Deprecated dependency detected: ${rule.pkg}. ${rule.suggestion}`,
+				dependency: rule.pkg,
+				tags: [FINDING_TAGS.MAINTENANCE, FINDING_TAGS.REPLACEMENT],
 			});
 		}
 	}
+
+	return findings;
+}
+
+/**
+ * Check for dependencies duplicated in both dependencies and devDependencies.
+ * Pure function - no side effects.
+ */
+function checkDuplicateDependencies(json: PackageJson): Finding[] {
+	const findings: Finding[] = [];
 
 	if (json.dependencies && json.devDependencies) {
 		for (const dep of Object.keys(json.dependencies)) {
 			if (json.devDependencies[dep]) {
 				findings.push({
 					type: 'warning',
-					message: `Dependencia duplicada en dependencies y devDependencies: ${dep}.`,
+					message: `Duplicate dependency in dependencies and devDependencies: ${dep}.`,
 					dependency: dep,
-					tags: ['duplication'],
+					tags: [FINDING_TAGS.DUPLICATION],
 				});
 			}
 		}
 	}
 
-	if (
-		!json.scripts ||
-		!json.scripts.test ||
-		json.scripts.test.includes('no test')
-	) {
-		findings.push({
-			type: 'info',
-			message: 'No se detectaron tests configurados. Añade script "test".',
-			tags: ['quality'],
-		});
-	}
-
-	if (!json.files) {
-		findings.push({
-			type: 'info',
-			message:
-				'No existe el campo "files". Añadirlo reduce tamaño del paquete publicado.',
-			tags: ['packaging'],
-		});
-	}
-
-	if (!json.type) {
-		findings.push({
-			type: 'info',
-			message: 'No se detecta "type". Considera usar "type": "module".',
-			tags: ['config'],
-		});
-	}
-
 	return findings;
+}
+
+/**
+ * Check for missing or placeholder test scripts.
+ * Pure function - no side effects.
+ */
+function checkTestScript(json: PackageJson): Finding[] {
+	const hasTestScript = json.scripts?.test;
+	const hasValidTest = hasTestScript && !hasTestScript.includes('no test');
+
+	if (!hasValidTest) {
+		return [
+			{
+				type: 'info',
+				message: 'No tests configured. Add a "test" script.',
+				tags: [FINDING_TAGS.QUALITY],
+			},
+		];
+	}
+
+	return [];
+}
+
+/**
+ * Check for missing "files" field which helps reduce published package size.
+ * Pure function - no side effects.
+ */
+function checkFilesField(json: PackageJson): Finding[] {
+	if (!json.files) {
+		return [
+			{
+				type: 'info',
+				message:
+					'Missing "files" field. Adding it reduces the published package size.',
+				tags: [FINDING_TAGS.PACKAGING],
+			},
+		];
+	}
+
+	return [];
+}
+
+/**
+ * Check for missing "type" field for ESM/CJS module resolution.
+ * Pure function - no side effects.
+ */
+function checkTypeField(json: PackageJson): Finding[] {
+	if (!json.type) {
+		return [
+			{
+				type: 'info',
+				message: 'Missing "type" field. Consider using "type": "module".',
+				tags: [FINDING_TAGS.CONFIG],
+			},
+		];
+	}
+
+	return [];
+}
+
+/**
+ * Creates a heuristics analyzer that checks for common package.json issues.
+ *
+ * Factory pattern enables:
+ * - Future configuration injection
+ * - Easy testing with mock configurations
+ * - Dependency inversion principle compliance
+ */
+export function createHeuristicsAnalyzer(): Analyzer {
+	return {
+		name: 'heuristics',
+
+		async analyze(context: AnalysisContext) {
+			const { packageJson, allDependencies } = context;
+
+			const findings: Finding[] = [
+				...checkDeprecatedPackages(allDependencies),
+				...checkDuplicateDependencies(packageJson),
+				...checkTestScript(packageJson),
+				...checkFilesField(packageJson),
+				...checkTypeField(packageJson),
+			];
+
+			return success(findings);
+		},
+	};
+}
+
+/**
+ * @deprecated Use createHeuristicsAnalyzer() factory instead.
+ * Kept for backward compatibility during migration.
+ */
+export async function heuristicsAnalyzer(
+	json: PackageJson,
+	allDeps: Readonly<Record<string, string>>,
+): Promise<readonly Finding[]> {
+	const analyzer = createHeuristicsAnalyzer();
+	const context: AnalysisContext = {
+		packageJson: json,
+		allDependencies: allDeps,
+		dependencyRanges: {},
+		workspacePath: '',
+	};
+
+	const result = await analyzer.analyze(context);
+	return result.success ? result.data : [];
 }

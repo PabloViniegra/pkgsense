@@ -9,3 +9,12 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 **/.vscode-test.*
+node_modules/**
+.git/**
+.github/**
+*.vsix
+pnpm-lock.yaml
+CLAUDE.md
+biome.json
+.mcp.json
+.claude/**
