@@ -49,6 +49,6 @@ coverage/
 .cache/
 
 # Claude
-.CLAUDE.md
+CLAUDE.md
 .claude/*
 .mcp.json
