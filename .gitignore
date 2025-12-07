@@ -1,0 +1,54 @@
+# Build output
+out/
+dist/
+*.vsix
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# VS Code test artifacts
+.vscode-test/
+.vscode-test.js
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Claude
+.CLAUDE.md
+.claude/*
+.mcp.json

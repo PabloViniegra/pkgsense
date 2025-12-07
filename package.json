@@ -1,0 +1,44 @@
+{
+	"name": "pkgsense",
+	"displayName": "pkg Sense",
+	"description": "Is the essential extension for any Node.js project, offering deep and intelligent insight into your package.json file. Forget the uncertainty about your dependencies. Transform your main configuration file into an interactive dashboard, ensuring your project is robust, efficient, and always up-to-date.",
+	"version": "1.0.0",
+	"engines": {
+		"vscode": "^1.106.1"
+	},
+	"categories": ["Other"],
+	"activationEvents": ["onLanguage:json"],
+	"main": "./out/extension.js",
+	"contributes": {
+		"commands": [
+			{
+				"command": "pkgsense.analyze",
+				"title": "Analyze package.json"
+			}
+		]
+	},
+	"scripts": {
+		"vscode:prepublish": "pnpm run compile",
+		"compile": "tsc -p ./",
+		"watch": "tsc -watch -p ./",
+		"pretest": "pnpm run compile && pnpm run lint",
+		"lint": "biome lint .",
+		"format": "biome format .",
+		"test": "vscode-test"
+	},
+	"dependencies": {
+		"node-fetch": "2.6.7"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.4",
+		"@types/mocha": "^10.0.10",
+		"@types/node": "22.x",
+		"@types/node-fetch": "^2.6.13",
+		"@types/vscode": "^1.106.1",
+		"@vscode/test-cli": "^0.0.12",
+		"@vscode/test-electron": "^2.5.2",
+		"eslint": "^9.39.1",
+		"typescript": "^5.9.3",
+		"typescript-eslint": "^8.48.1"
+	}
+}
