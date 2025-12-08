@@ -39,6 +39,8 @@ export type AnalyzerErrorCode =
 	| 'PARSE_ERROR'
 	| 'TIMEOUT_ERROR'
 	| 'VALIDATION_ERROR'
+	| 'LICENSE_ANALYSIS_ERROR'
+	| 'UPDATE_ANALYSIS_ERROR'
 	| 'UNKNOWN_ERROR';
 
 /**

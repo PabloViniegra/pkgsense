@@ -1,5 +1,3 @@
-import { LRUCache } from 'lru-cache';
-
 /**
  * Generic cache implementation using LRU (Least Recently Used) eviction policy.
  *
@@ -17,8 +15,16 @@ import { LRUCache } from 'lru-cache';
  * const info = cache.get('react@18.0.0');
  * ```
  */
-export class Cache<T> {
-	private cache: LRUCache<string, T>;
+
+interface CacheEntry<T> {
+	value: T;
+	expiry: number;
+}
+
+export class Cache<T = unknown> {
+	private cache: Map<string, CacheEntry<T>>;
+	private readonly ttl: number;
+	private readonly max: number;
 
 	/**
 	 * Creates a new Cache instance.
@@ -28,11 +34,9 @@ export class Cache<T> {
 	 * @param options.max Maximum number of entries (default: 100)
 	 */
 	constructor(options: { ttl?: number; max?: number } = {}) {
-		this.cache = new LRUCache<string, T>({
-			ttl: options.ttl ?? 3600000, // 1 hour default
-			max: options.max ?? 100,
-			updateAgeOnGet: true, // Refresh TTL on access
-		});
+		this.cache = new Map();
+		this.ttl = options.ttl ?? 3600000; // 1 hour default
+		this.max = options.max ?? 100;
 	}
 
 	/**
@@ -42,7 +46,19 @@ export class Cache<T> {
 	 * @returns The cached value or undefined if not found/expired
 	 */
 	get(key: string): T | undefined {
-		return this.cache.get(key);
+		const entry = this.cache.get(key);
+
+		if (!entry) {
+			return undefined;
+		}
+
+		// Check if expired
+		if (Date.now() > entry.expiry) {
+			this.cache.delete(key);
+			return undefined;
+		}
+
+		return entry.value;
 	}
 
 	/**
@@ -52,7 +68,17 @@ export class Cache<T> {
 	 * @param value The value to store
 	 */
 	set(key: string, value: T): void {
-		this.cache.set(key, value);
+		// Enforce max size using LRU eviction
+		if (this.cache.size >= this.max && !this.cache.has(key)) {
+			// Remove oldest entry (first key)
+			const firstKey = this.cache.keys().next().value;
+			if (firstKey !== undefined) {
+				this.cache.delete(firstKey);
+			}
+		}
+
+		const expiry = Date.now() + this.ttl;
+		this.cache.set(key, { value, expiry });
 	}
 
 	/**
@@ -62,7 +88,19 @@ export class Cache<T> {
 	 * @returns True if the key exists and is valid
 	 */
 	has(key: string): boolean {
-		return this.cache.has(key);
+		const entry = this.cache.get(key);
+
+		if (!entry) {
+			return false;
+		}
+
+		// Check if expired
+		if (Date.now() > entry.expiry) {
+			this.cache.delete(key);
+			return false;
+		}
+
+		return true;
 	}
 
 	/**

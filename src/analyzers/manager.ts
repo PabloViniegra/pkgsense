@@ -7,12 +7,16 @@ import {
 	createHeuristicsAnalyzer,
 	heuristicsAnalyzer,
 } from './heuristicsAnalyzer';
+import { createLicenseAnalyzer, licenseAnalyzer } from './licenseAnalyzer';
+import { createMetadataAnalyzer, metadataAnalyzer } from './metadataAnalyzer';
+import { createScriptAnalyzer, scriptAnalyzer } from './scriptAnalyzer';
 import type {
 	Analyzer,
 	AnalysisContext,
 	AnalysisManagerError,
 	LineRange,
 } from './types';
+import { createUpdateAnalyzer, updateAnalyzer } from './updateAnalyzer';
 import {
 	createVulnerabilityAnalyzer,
 	vulnerabilityAnalyzer,
@@ -41,6 +45,10 @@ function createDefaultAnalyzers(): Analyzer[] {
 		createHeuristicsAnalyzer(),
 		createWeightAnalyzer(),
 		createVulnerabilityAnalyzer(),
+		createMetadataAnalyzer(),
+		createScriptAnalyzer(),
+		createLicenseAnalyzer(),
+		createUpdateAnalyzer(),
 	];
 }
 
