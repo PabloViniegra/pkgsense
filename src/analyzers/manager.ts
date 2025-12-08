@@ -1,18 +1,28 @@
 import * as vscode from 'vscode';
 import type { DiagnosticsManager } from '../decorators/diagnostics';
+import { NotificationManager } from '../decorators/notifications';
 import { CONSTANTS } from '../shared/constants';
 import { type Result, failure, success } from '../shared/result';
 import { type Finding, isPackageJson } from '../types';
 import {
+	createDependencyGraphAnalyzer,
+	dependencyGraphAnalyzer,
+} from './dependencyGraphAnalyzer';
+import { createEngineAnalyzer, engineAnalyzer } from './engineAnalyzer';
+import {
 	createHeuristicsAnalyzer,
 	heuristicsAnalyzer,
 } from './heuristicsAnalyzer';
+import { createLicenseAnalyzer, licenseAnalyzer } from './licenseAnalyzer';
+import { createMetadataAnalyzer, metadataAnalyzer } from './metadataAnalyzer';
+import { createScriptAnalyzer, scriptAnalyzer } from './scriptAnalyzer';
 import type {
 	Analyzer,
 	AnalysisContext,
 	AnalysisManagerError,
 	LineRange,
 } from './types';
+import { createUpdateAnalyzer, updateAnalyzer } from './updateAnalyzer';
 import {
 	createVulnerabilityAnalyzer,
 	vulnerabilityAnalyzer,
@@ -41,6 +51,12 @@ function createDefaultAnalyzers(): Analyzer[] {
 		createHeuristicsAnalyzer(),
 		createWeightAnalyzer(),
 		createVulnerabilityAnalyzer(),
+		createMetadataAnalyzer(),
+		createScriptAnalyzer(),
+		createLicenseAnalyzer(),
+		createUpdateAnalyzer(),
+		createEngineAnalyzer(),
+		createDependencyGraphAnalyzer(),
 	];
 }
 
@@ -152,9 +168,11 @@ function convertFindingsToVscode(
  */
 export class AnalysisManager {
 	private readonly analyzers: readonly Analyzer[];
+	private readonly notificationManager: NotificationManager;
 
 	constructor(config: AnalysisManagerConfig = {}) {
 		this.analyzers = config.analyzers ?? createDefaultAnalyzers();
+		this.notificationManager = new NotificationManager();
 	}
 
 	/**
@@ -198,12 +216,28 @@ export class AnalysisManager {
 				vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd(),
 		};
 
-		const findings = await this.runAnalyzers(context);
+		// Show progress indicator for analysis
+		const findings = await vscode.window.withProgress(
+			{
+				location: vscode.ProgressLocation.Window,
+				title: 'Analyzing package.json',
+				cancellable: false,
+			},
+			async (progress) => {
+				progress.report({ increment: 0, message: 'Starting analysis...' });
+				const results = await this.runAnalyzers(context);
+				progress.report({ increment: 100, message: 'Analysis complete' });
+				return results;
+			},
+		);
 
 		// Convert LineRange to vscode.Range for diagnostics
 		const vscodeFindings = convertFindingsToVscode(findings, dependencyRanges);
 
 		diagnostics.setFindings(document.uri, vscodeFindings);
+
+		// Show notifications for critical vulnerabilities
+		this.notificationManager.notifyFindings(vscodeFindings);
 
 		return success(undefined);
 	}

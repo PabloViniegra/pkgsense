@@ -1,6 +1,13 @@
 import * as vscode from 'vscode';
 import { analyzePackageDocument } from './analyzers/manager';
+import { PackageCodeActionProvider } from './decorators/codeActions';
 import { DiagnosticsManager } from './decorators/diagnostics';
+import {
+	addMetadataFieldCommand,
+	fixVulnerabilityCommand,
+	removeDependencyCommand,
+	updateDependencyCommand,
+} from './commands/packageCommands';
 import { CONSTANTS } from './shared/constants';
 
 /**
@@ -25,6 +32,16 @@ export function activate(context: vscode.ExtensionContext) {
 		CONSTANTS.DIAGNOSTIC_COLLECTION_NAME,
 	);
 	context.subscriptions.push(diagnostics);
+
+	// Register code action provider for inline suggestions
+	const codeActionProvider = vscode.languages.registerCodeActionsProvider(
+		{ language: 'json', pattern: `**/${CONSTANTS.PACKAGE_JSON_FILENAME}` },
+		new PackageCodeActionProvider(),
+		{
+			providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
+		},
+	);
+	context.subscriptions.push(codeActionProvider);
 
 	const analyzeIfPackage = (doc: vscode.TextDocument) => {
 		if (!doc) return;
@@ -53,7 +70,8 @@ export function activate(context: vscode.ExtensionContext) {
 		analyzeIfPackage(vscode.window.activeTextEditor.document);
 	}
 
-	const disposable = vscode.commands.registerCommand(
+	// Register analyze command
+	const analyzeCommand = vscode.commands.registerCommand(
 		'pkgsense.analyze',
 		async () => {
 			const editor = vscode.window.activeTextEditor;
@@ -65,7 +83,32 @@ export function activate(context: vscode.ExtensionContext) {
 			vscode.window.showInformationMessage(CONSTANTS.INFO_ANALYSIS_COMPLETED);
 		},
 	);
-	context.subscriptions.push(disposable);
+	context.subscriptions.push(analyzeCommand);
+
+	// Register package modification commands
+	const removeDependency = vscode.commands.registerCommand(
+		'pkgsense.removeDependency',
+		removeDependencyCommand,
+	);
+	context.subscriptions.push(removeDependency);
+
+	const updateDependency = vscode.commands.registerCommand(
+		'pkgsense.updateDependency',
+		updateDependencyCommand,
+	);
+	context.subscriptions.push(updateDependency);
+
+	const addMetadataField = vscode.commands.registerCommand(
+		'pkgsense.addMetadataField',
+		addMetadataFieldCommand,
+	);
+	context.subscriptions.push(addMetadataField);
+
+	const fixVulnerability = vscode.commands.registerCommand(
+		'pkgsense.fixVulnerability',
+		fixVulnerabilityCommand,
+	);
+	context.subscriptions.push(fixVulnerability);
 }
 
 /**

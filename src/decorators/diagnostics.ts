@@ -63,6 +63,11 @@ export class DiagnosticsManager {
 	 * - 'error' → DiagnosticSeverity.Error
 	 * - 'warning' → DiagnosticSeverity.Warning
 	 * - 'info' → DiagnosticSeverity.Information
+	 *
+	 * Enhanced color coding:
+	 * - Deprecated packages get DiagnosticTag.Deprecated (strikethrough)
+	 * - Unnecessary code gets DiagnosticTag.Unnecessary (faded)
+	 * - Related information links provide additional context
 	 */
 	setFindings(uri: vscode.Uri, findings: Finding[]) {
 		const diags: vscode.Diagnostic[] = findings.map((f) => {
@@ -80,9 +85,71 @@ export class DiagnosticsManager {
 			const d = new vscode.Diagnostic(range, message, sev);
 			d.source = CONSTANTS.DIAGNOSTIC_SOURCE;
 			if (f.dependency) d.code = f.dependency;
+
+			// Enhanced color coding with tags
+			d.tags = this.computeDiagnosticTags(f);
+
+			// Add related information for better context
+			if (f.dependency) {
+				d.relatedInformation = this.createRelatedInformation(f);
+			}
+
 			return d;
 		});
 
 		this.collection.set(uri, diags);
+	}
+
+	/**
+	 * Compute VS Code diagnostic tags based on finding tags.
+	 * Pure function - no side effects.
+	 */
+	private computeDiagnosticTags(finding: Finding): vscode.DiagnosticTag[] {
+		const tags: vscode.DiagnosticTag[] = [];
+
+		if (!finding.tags) return tags;
+
+		// Check for replacement/maintenance patterns (deprecated packages)
+		if (
+			finding.tags.includes('replacement') ||
+			finding.tags.includes('maintenance')
+		) {
+			tags.push(vscode.DiagnosticTag.Deprecated);
+		}
+
+		// Check for duplication patterns (unnecessary dependencies)
+		if (finding.tags.includes('duplication')) {
+			tags.push(vscode.DiagnosticTag.Unnecessary);
+		}
+
+		return tags;
+	}
+
+	/**
+	 * Create related information links for diagnostics.
+	 * Provides additional context and helpful resources.
+	 */
+	private createRelatedInformation(
+		finding: Finding,
+	): vscode.DiagnosticRelatedInformation[] {
+		if (!finding.dependency) return [];
+
+		const info: vscode.DiagnosticRelatedInformation[] = [];
+
+		// Add npm package link
+		const message = `View ${finding.dependency} on npm`;
+		info.push(
+			new vscode.DiagnosticRelatedInformation(
+				new vscode.Location(
+					vscode.Uri.parse(
+						`https://www.npmjs.com/package/${finding.dependency}`,
+					),
+					new vscode.Range(0, 0, 0, 0),
+				),
+				message,
+			),
+		);
+
+		return info;
 	}
 }

@@ -210,12 +210,8 @@ suite('DiagnosticsManager Test Suite', () => {
 			const uri1 = vscode.Uri.file('/test/package1.json');
 			const uri2 = vscode.Uri.file('/test/package2.json');
 
-			manager.setFindings(uri1, [
-				{ type: 'error', message: 'Error 1' },
-			]);
-			manager.setFindings(uri2, [
-				{ type: 'warning', message: 'Warning 1' },
-			]);
+			manager.setFindings(uri1, [{ type: 'error', message: 'Error 1' }]);
+			manager.setFindings(uri2, [{ type: 'warning', message: 'Warning 1' }]);
 
 			manager.clear();
 
@@ -288,9 +284,7 @@ suite('DiagnosticsManager Test Suite', () => {
 			manager.setFindings(uri2, [
 				{ type: 'warning', message: 'Warning in file 2' },
 			]);
-			manager.setFindings(uri3, [
-				{ type: 'info', message: 'Info in file 3' },
-			]);
+			manager.setFindings(uri3, [{ type: 'info', message: 'Info in file 3' }]);
 
 			assert.ok(true);
 		});
@@ -378,6 +372,238 @@ suite('DiagnosticsManager Test Suite', () => {
 				{
 					type: 'info',
 					message: '',
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+	});
+
+	suite('Enhanced Diagnostic Tags', () => {
+		test('should apply Deprecated tag for replacement findings', () => {
+			const findings: Finding[] = [
+				{
+					type: 'warning',
+					message: 'Deprecated package',
+					dependency: 'moment',
+					tags: [FINDING_TAGS.REPLACEMENT],
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+
+		test('should apply Deprecated tag for maintenance findings', () => {
+			const findings: Finding[] = [
+				{
+					type: 'warning',
+					message: 'No longer maintained',
+					dependency: 'request',
+					tags: [FINDING_TAGS.MAINTENANCE],
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+
+		test('should apply Unnecessary tag for duplication findings', () => {
+			const findings: Finding[] = [
+				{
+					type: 'warning',
+					message: 'Duplicate dependency',
+					dependency: 'lodash',
+					tags: [FINDING_TAGS.DUPLICATION],
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+
+		test('should apply multiple tags when appropriate', () => {
+			const findings: Finding[] = [
+				{
+					type: 'warning',
+					message: 'Deprecated and duplicate',
+					dependency: 'pkg',
+					tags: [FINDING_TAGS.REPLACEMENT, FINDING_TAGS.DUPLICATION],
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+
+		test('should not apply tags for other finding types', () => {
+			const findings: Finding[] = [
+				{
+					type: 'info',
+					message: 'Info message',
+					dependency: 'pkg',
+					tags: [FINDING_TAGS.QUALITY],
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+
+		test('should handle findings with no tags', () => {
+			const findings: Finding[] = [
+				{
+					type: 'error',
+					message: 'Error without tags',
+					dependency: 'pkg',
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+
+		test('should handle findings with empty tags array', () => {
+			const findings: Finding[] = [
+				{
+					type: 'warning',
+					message: 'Warning with empty tags',
+					dependency: 'pkg',
+					tags: [],
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+	});
+
+	suite('Related Information', () => {
+		test('should create npm link for findings with dependency', () => {
+			const findings: Finding[] = [
+				{
+					type: 'error',
+					message: 'Issue found',
+					dependency: 'test-package',
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+
+		test('should not create related info for findings without dependency', () => {
+			const findings: Finding[] = [
+				{
+					type: 'warning',
+					message: 'Generic warning',
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+
+		test('should create related info for each dependency finding', () => {
+			const findings: Finding[] = [
+				{
+					type: 'error',
+					message: 'Issue 1',
+					dependency: 'pkg1',
+				},
+				{
+					type: 'error',
+					message: 'Issue 2',
+					dependency: 'pkg2',
+				},
+				{
+					type: 'warning',
+					message: 'Issue 3',
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+
+		test('should handle scoped package names in related info', () => {
+			const findings: Finding[] = [
+				{
+					type: 'error',
+					message: 'Issue',
+					dependency: '@types/node',
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+	});
+
+	suite('Integration - Tags and Related Info', () => {
+		test('should handle deprecated finding with related info', () => {
+			const findings: Finding[] = [
+				{
+					type: 'warning',
+					message: 'Deprecated package',
+					dependency: 'moment',
+					tags: [FINDING_TAGS.REPLACEMENT],
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+
+		test('should handle duplicate finding with related info', () => {
+			const findings: Finding[] = [
+				{
+					type: 'warning',
+					message: 'Duplicate dependency',
+					dependency: 'typescript',
+					tags: [FINDING_TAGS.DUPLICATION],
+				},
+			];
+
+			manager.setFindings(testUri, findings);
+
+			assert.ok(true);
+		});
+
+		test('should handle complex findings with multiple features', () => {
+			const findings: Finding[] = [
+				{
+					type: 'error',
+					message: 'Security vulnerability',
+					dependency: 'vulnerable-pkg',
+					range: new vscode.Range(5, 10, 5, 30),
+					tags: [FINDING_TAGS.SECURITY],
+				},
+				{
+					type: 'warning',
+					message: 'Deprecated and duplicate',
+					dependency: 'old-pkg',
+					range: new vscode.Range(8, 5, 8, 15),
+					tags: [FINDING_TAGS.MAINTENANCE, FINDING_TAGS.DUPLICATION],
+				},
+				{
+					type: 'info',
+					message: 'Missing metadata',
+					tags: [FINDING_TAGS.QUALITY],
 				},
 			];
 

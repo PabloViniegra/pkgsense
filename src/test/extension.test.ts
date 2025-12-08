@@ -36,9 +36,7 @@ suite('Extension Test Suite', () => {
 	suite('Command Execution', () => {
 		test('should execute analyze command without editor', async () => {
 			// Close all editors
-			await vscode.commands.executeCommand(
-				'workbench.action.closeAllEditors',
-			);
+			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 
 			// Command should not throw, even without active editor
 			await assert.doesNotReject(async () => {
@@ -242,9 +240,7 @@ suite('Extension Test Suite', () => {
 			assert.ok(true);
 
 			// Clean up
-			await vscode.commands.executeCommand(
-				'workbench.action.closeAllEditors',
-			);
+			await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 		});
 	});
 });
