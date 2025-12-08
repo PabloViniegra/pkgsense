@@ -2,7 +2,7 @@
 	"name": "pkgsense",
 	"displayName": "pkg Sense",
 	"description": "Is the essential extension for any Node.js project, offering deep and intelligent insight into your package.json file. Forget the uncertainty about your dependencies. Transform your main configuration file into an interactive dashboard, ensuring your project is robust, efficient, and always up-to-date.",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"publisher": "PabloViniegra",
 	"license": "MIT",
 	"icon": "public/logo.png",
