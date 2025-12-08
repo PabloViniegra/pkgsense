@@ -126,9 +126,7 @@ export async function fetchPackageMetadata(
 			if (!response.ok) {
 				// 404 means package doesn't exist, don't retry
 				if (response.status === 404) {
-					return failure(
-						`Package "${trimmedName}" not found in NPM registry`,
-					);
+					return failure(`Package "${trimmedName}" not found in NPM registry`);
 				}
 
 				// 429 means rate limited, wait longer
@@ -188,7 +186,9 @@ export async function fetchPackageMetadata(
 		}
 	}
 
-	return failure(`Failed to fetch package metadata for ${trimmedName} after ${MAX_RETRIES} attempts`);
+	return failure(
+		`Failed to fetch package metadata for ${trimmedName} after ${MAX_RETRIES} attempts`,
+	);
 }
 
 /**
@@ -233,8 +233,7 @@ export async function fetchPackageLicense(
 		return failure(metadataResult.error);
 	}
 
-	const targetVersion =
-		version || metadataResult.data['dist-tags'].latest;
+	const targetVersion = version || metadataResult.data['dist-tags'].latest;
 	const versionInfo = metadataResult.data.versions[targetVersion];
 
 	if (!versionInfo) {
@@ -244,7 +243,9 @@ export async function fetchPackageLicense(
 	}
 
 	if (!versionInfo.license) {
-		return failure(`No license information found for ${packageName}@${targetVersion}`);
+		return failure(
+			`No license information found for ${packageName}@${targetVersion}`,
+		);
 	}
 
 	return success(versionInfo.license);

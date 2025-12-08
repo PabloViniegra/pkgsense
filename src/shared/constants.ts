@@ -30,7 +30,10 @@ export const CONSTANTS = {
 	SCRIPT_DANGER_PATTERNS: [
 		{ pattern: /rm\s+-rf/, message: 'Dangerous: rm -rf command detected' },
 		{ pattern: /sudo\s+/, message: 'Requires elevated privileges (sudo)' },
-		{ pattern: /eval\s*\(/, message: 'eval() detected - potential security risk' },
+		{
+			pattern: /eval\s*\(/,
+			message: 'eval() detected - potential security risk',
+		},
 		{
 			pattern: />\s*\/dev\/null\s+2>&1/,
 			message: 'Output suppression may hide errors',

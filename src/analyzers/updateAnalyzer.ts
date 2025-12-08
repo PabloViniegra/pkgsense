@@ -73,9 +73,7 @@ function findUpdates(
 ): UpdateInfo[] {
 	const updates: UpdateInfo[] = [];
 
-	for (const [packageName, currentVersionRaw] of Object.entries(
-		dependencies,
-	)) {
+	for (const [packageName, currentVersionRaw] of Object.entries(dependencies)) {
 		const latestVersion = latestVersions.get(packageName);
 
 		if (!latestVersion) {
@@ -112,8 +110,7 @@ function createFindingsFromUpdates(updates: UpdateInfo[]): Finding[] {
 	const findings: Finding[] = [];
 
 	for (const update of updates) {
-		const { packageName, currentVersion, latestVersion, updateType } =
-			update;
+		const { packageName, currentVersion, latestVersion, updateType } = update;
 
 		// Major updates are warnings (potential breaking changes)
 		if (updateType === 'major') {
@@ -180,9 +177,7 @@ async function analyze(
 
 	try {
 		// Fetch latest versions for all dependencies
-		const latestVersions = await fetchLatestVersions(
-			context.allDependencies,
-		);
+		const latestVersions = await fetchLatestVersions(context.allDependencies);
 
 		// Find updates by comparing versions
 		const updates = findUpdates(context.allDependencies, latestVersions);
@@ -197,9 +192,7 @@ async function analyze(
 		return failure({
 			code: 'UPDATE_ANALYSIS_ERROR',
 			message:
-				error instanceof Error
-					? error.message
-					: 'Failed to analyze updates',
+				error instanceof Error ? error.message : 'Failed to analyze updates',
 		});
 	}
 }

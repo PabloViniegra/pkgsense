@@ -100,8 +100,7 @@ function checkLicenseConflicts(
 	if (!packageLicense) {
 		findings.push({
 			type: 'warning',
-			message:
-				'Package has no license. This may cause legal issues for users.',
+			message: 'Package has no license. This may cause legal issues for users.',
 			tags: [FINDING_TAGS.LICENSE, FINDING_TAGS.PACKAGING],
 		});
 	}
@@ -200,9 +199,7 @@ async function analyze(
 
 	try {
 		// Fetch licenses for all dependencies
-		const licenses = await fetchDependencyLicenses(
-			context.allDependencies,
-		);
+		const licenses = await fetchDependencyLicenses(context.allDependencies);
 
 		// Check for conflicts
 		findings.push(...checkLicenseConflicts(licenses, pkg.license));
@@ -212,9 +209,7 @@ async function analyze(
 		return failure({
 			code: 'LICENSE_ANALYSIS_ERROR',
 			message:
-				error instanceof Error
-					? error.message
-					: 'Failed to analyze licenses',
+				error instanceof Error ? error.message : 'Failed to analyze licenses',
 		});
 	}
 }

@@ -124,7 +124,8 @@ function checkHeavyDependencies(
 			},
 			'moment-timezone': {
 				alternative: 'date-fns-tz or Luxon',
-				reason: 'moment-timezone is very large; modern alternatives are smaller',
+				reason:
+					'moment-timezone is very large; modern alternatives are smaller',
 			},
 			axios: {
 				alternative: 'native fetch or ky',

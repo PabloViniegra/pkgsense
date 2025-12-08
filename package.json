@@ -13,10 +13,7 @@
 	"engines": {
 		"vscode": "^1.106.1"
 	},
-	"categories": [
-		"Linters",
-		"Programming Languages"
-	],
+	"categories": ["Linters", "Programming Languages"],
 	"keywords": [
 		"package.json",
 		"npm",
@@ -28,29 +25,45 @@
 		"nodejs",
 		"node"
 	],
-	"activationEvents": [
-		"onLanguage:json",
-		"onCommand:pkgsense.analyze"
-	],
+	"activationEvents": ["onLanguage:json", "onCommand:pkgsense.analyze"],
 	"main": "./out/extension.js",
 	"contributes": {
 		"commands": [
 			{
 				"command": "pkgsense.analyze",
 				"title": "Analyze package.json"
+			},
+			{
+				"command": "pkgsense.removeDependency",
+				"title": "Remove Dependency"
+			},
+			{
+				"command": "pkgsense.updateDependency",
+				"title": "Update Dependency"
+			},
+			{
+				"command": "pkgsense.addMetadataField",
+				"title": "Add Metadata Field"
+			},
+			{
+				"command": "pkgsense.fixVulnerability",
+				"title": "Fix Vulnerability"
 			}
 		]
 	},
 	"scripts": {
-		"vscode:prepublish": "pnpm run compile",
-		"compile": "tsc -p ./",
-		"watch": "tsc -watch -p ./",
-		"pretest": "pnpm run compile && pnpm run lint",
+		"vscode:prepublish": "pnpm run package",
+		"compile": "pnpm run check-types && node esbuild.js",
+		"check-types": "tsc --noEmit",
+		"watch": "npm-run-all -p watch:*",
+		"watch:esbuild": "node esbuild.js --watch",
+		"watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+		"pretest": "tsc -p ./ && pnpm run lint",
 		"lint": "biome lint .",
 		"format": "biome format --write .",
 		"test": "vscode-test",
-		"package": "vsce package --no-dependencies",
-		"publish": "vsce publish --no-dependencies"
+		"package": "pnpm run check-types && node esbuild.js --production",
+		"vsce:package": "vsce package --no-dependencies"
 	},
 	"dependencies": {
 		"node-fetch": "2.6.7",
@@ -62,6 +75,7 @@
 		"@types/node": "22.x",
 		"@types/node-fetch": "^2.6.13",
 		"@types/semver": "^7.7.1",
+		"@types/sinon": "^21.0.0",
 		"@types/vscode": "^1.106.1",
 		"@vscode/test-cli": "^0.0.12",
 		"@vscode/test-electron": "^2.5.2",
@@ -70,6 +84,8 @@
 		"eslint": "^9.39.1",
 		"mocha": "^11.7.5",
 		"nock": "^14.0.10",
+		"npm-run-all": "^4.1.5",
+		"sinon": "^21.0.0",
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.48.1"
 	}

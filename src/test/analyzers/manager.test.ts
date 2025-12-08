@@ -30,12 +30,7 @@ suite('AnalysisManager Test Suite', () => {
 				text: lines[line] || '',
 				lineNumber: line,
 				range: new vscode.Range(line, 0, line, lines[line]?.length || 0),
-				rangeIncludingLineBreak: new vscode.Range(
-					line,
-					0,
-					line + 1,
-					0,
-				),
+				rangeIncludingLineBreak: new vscode.Range(line, 0, line + 1, 0),
 				firstNonWhitespaceCharacterIndex: 0,
 				isEmptyOrWhitespace: !lines[line]?.trim(),
 			}),
@@ -183,8 +178,7 @@ suite('AnalysisManager Test Suite', () => {
 
 			const analyzer2: Analyzer = {
 				name: 'test2',
-				analyze: async () =>
-					success([{ type: 'error', message: 'Finding 3' }]),
+				analyze: async () => success([{ type: 'error', message: 'Finding 3' }]),
 			};
 
 			const content = JSON.stringify({ name: 'test' });

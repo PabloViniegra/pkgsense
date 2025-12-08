@@ -21,4 +21,5 @@ TEST_SUMMARY.md
 .claude/**
 .mcp.json
 eslint.config.mjs
+esbuild.js
 out/test/**

@@ -36,7 +36,8 @@ interface DangerPattern {
 const DANGER_PATTERNS: readonly DangerPattern[] = [
 	{
 		pattern: /rm\s+-rf/,
-		message: 'Dangerous: "rm -rf" command detected. This can delete files permanently.',
+		message:
+			'Dangerous: "rm -rf" command detected. This can delete files permanently.',
 		severity: 'error',
 	},
 	{

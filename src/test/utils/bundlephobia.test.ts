@@ -219,7 +219,10 @@ suite('Bundlephobia Utility Test Suite', () => {
 
 	suite('Edge Cases', () => {
 		test('should handle null as package name', async () => {
-			const result = await fetchBundlephobia(null as unknown as string, '1.0.0');
+			const result = await fetchBundlephobia(
+				null as unknown as string,
+				'1.0.0',
+			);
 
 			assert.strictEqual(result.success, false);
 			if (!result.success) {
@@ -228,7 +231,10 @@ suite('Bundlephobia Utility Test Suite', () => {
 		});
 
 		test('should handle undefined as package name', async () => {
-			const result = await fetchBundlephobia(undefined as unknown as string, '1.0.0');
+			const result = await fetchBundlephobia(
+				undefined as unknown as string,
+				'1.0.0',
+			);
 
 			assert.strictEqual(result.success, false);
 			if (!result.success) {

@@ -19,42 +19,38 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 	suite('Deprecated Packages Detection', () => {
 		test('should detect moment as deprecated', async () => {
 			const analyzer = createHeuristicsAnalyzer();
-			const context = createContext(
-				{},
-				{ moment: '^2.29.0' },
-			);
+			const context = createContext({}, { moment: '^2.29.0' });
 
 			const result = await analyzer.analyze(context);
 
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const deprecatedFindings = findings.filter(
-					f => f.message.includes('Deprecated dependency'),
+				const deprecatedFindings = findings.filter((f) =>
+					f.message.includes('Deprecated dependency'),
 				);
 				assert.strictEqual(deprecatedFindings.length, 1);
 				assert.strictEqual(deprecatedFindings[0].type, 'warning');
 				assert.ok(deprecatedFindings[0].message.includes('moment'));
 				assert.ok(deprecatedFindings[0].message.includes('dayjs or luxon'));
 				assert.strictEqual(deprecatedFindings[0].dependency, 'moment');
-				assert.ok(deprecatedFindings[0].tags?.includes(FINDING_TAGS.MAINTENANCE));
+				assert.ok(
+					deprecatedFindings[0].tags?.includes(FINDING_TAGS.MAINTENANCE),
+				);
 			}
 		});
 
 		test('should detect request as deprecated', async () => {
 			const analyzer = createHeuristicsAnalyzer();
-			const context = createContext(
-				{},
-				{ request: '^2.88.0' },
-			);
+			const context = createContext({}, { request: '^2.88.0' });
 
 			const result = await analyzer.analyze(context);
 
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const deprecatedFindings = findings.filter(
-					f => f.message.includes('Deprecated dependency'),
+				const deprecatedFindings = findings.filter((f) =>
+					f.message.includes('Deprecated dependency'),
 				);
 				assert.strictEqual(deprecatedFindings.length, 1);
 				assert.ok(deprecatedFindings[0].message.includes('request'));
@@ -64,18 +60,15 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 
 		test('should detect left-pad as unnecessary', async () => {
 			const analyzer = createHeuristicsAnalyzer();
-			const context = createContext(
-				{},
-				{ 'left-pad': '^1.3.0' },
-			);
+			const context = createContext({}, { 'left-pad': '^1.3.0' });
 
 			const result = await analyzer.analyze(context);
 
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const deprecatedFindings = findings.filter(
-					f => f.message.includes('Deprecated dependency'),
+				const deprecatedFindings = findings.filter((f) =>
+					f.message.includes('Deprecated dependency'),
 				);
 				assert.strictEqual(deprecatedFindings.length, 1);
 				assert.ok(deprecatedFindings[0].message.includes('left-pad'));
@@ -98,8 +91,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const deprecatedFindings = findings.filter(
-					f => f.message.includes('Deprecated dependency'),
+				const deprecatedFindings = findings.filter((f) =>
+					f.message.includes('Deprecated dependency'),
 				);
 				assert.strictEqual(deprecatedFindings.length, 3);
 			}
@@ -119,8 +112,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 
 			assert.strictEqual(result.success, true);
 			if (result.success) {
-				const deprecatedFindings = result.data.filter(
-					f => f.message.includes('Deprecated dependency'),
+				const deprecatedFindings = result.data.filter((f) =>
+					f.message.includes('Deprecated dependency'),
 				);
 				assert.strictEqual(deprecatedFindings.length, 0);
 			}
@@ -140,12 +133,14 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const duplicateFindings = findings.filter(
-					f => f.message.includes('Duplicate dependency'),
+				const duplicateFindings = findings.filter((f) =>
+					f.message.includes('Duplicate dependency'),
 				);
 				assert.strictEqual(duplicateFindings.length, 1);
 				assert.strictEqual(duplicateFindings[0].dependency, 'typescript');
-				assert.ok(duplicateFindings[0].tags?.includes(FINDING_TAGS.DUPLICATION));
+				assert.ok(
+					duplicateFindings[0].tags?.includes(FINDING_TAGS.DUPLICATION),
+				);
 			}
 		});
 
@@ -167,8 +162,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const duplicateFindings = findings.filter(
-					f => f.message.includes('Duplicate dependency'),
+				const duplicateFindings = findings.filter((f) =>
+					f.message.includes('Duplicate dependency'),
 				);
 				assert.strictEqual(duplicateFindings.length, 2);
 			}
@@ -186,8 +181,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const duplicateFindings = findings.filter(
-					f => f.message.includes('Duplicate dependency'),
+				const duplicateFindings = findings.filter((f) =>
+					f.message.includes('Duplicate dependency'),
 				);
 				assert.strictEqual(duplicateFindings.length, 0);
 			}
@@ -202,8 +197,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const duplicateFindings = findings.filter(
-					f => f.message.includes('Duplicate dependency'),
+				const duplicateFindings = findings.filter((f) =>
+					f.message.includes('Duplicate dependency'),
 				);
 				assert.strictEqual(duplicateFindings.length, 0);
 			}
@@ -222,8 +217,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const testFindings = findings.filter(
-					f => f.message.includes('No tests configured'),
+				const testFindings = findings.filter((f) =>
+					f.message.includes('No tests configured'),
 				);
 				assert.strictEqual(testFindings.length, 1);
 				assert.strictEqual(testFindings[0].type, 'info');
@@ -242,8 +237,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const testFindings = findings.filter(
-					f => f.message.includes('No tests configured'),
+				const testFindings = findings.filter((f) =>
+					f.message.includes('No tests configured'),
 				);
 				assert.strictEqual(testFindings.length, 1);
 			}
@@ -260,8 +255,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const testFindings = findings.filter(
-					f => f.message.includes('No tests configured'),
+				const testFindings = findings.filter((f) =>
+					f.message.includes('No tests configured'),
 				);
 				assert.strictEqual(testFindings.length, 0);
 			}
@@ -276,8 +271,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const testFindings = findings.filter(
-					f => f.message.includes('No tests configured'),
+				const testFindings = findings.filter((f) =>
+					f.message.includes('No tests configured'),
 				);
 				assert.strictEqual(testFindings.length, 1);
 			}
@@ -294,8 +289,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const filesFindings = findings.filter(
-					f => f.message.includes('Missing "files" field'),
+				const filesFindings = findings.filter((f) =>
+					f.message.includes('Missing "files" field'),
 				);
 				assert.strictEqual(filesFindings.length, 1);
 				assert.strictEqual(filesFindings[0].type, 'info');
@@ -314,8 +309,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const filesFindings = findings.filter(
-					f => f.message.includes('Missing "files" field'),
+				const filesFindings = findings.filter((f) =>
+					f.message.includes('Missing "files" field'),
 				);
 				assert.strictEqual(filesFindings.length, 0);
 			}
@@ -332,8 +327,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const typeFindings = findings.filter(
-					f => f.message.includes('Missing "type" field'),
+				const typeFindings = findings.filter((f) =>
+					f.message.includes('Missing "type" field'),
 				);
 				assert.strictEqual(typeFindings.length, 1);
 				assert.strictEqual(typeFindings[0].type, 'info');
@@ -352,8 +347,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const typeFindings = findings.filter(
-					f => f.message.includes('Missing "type" field'),
+				const typeFindings = findings.filter((f) =>
+					f.message.includes('Missing "type" field'),
 				);
 				assert.strictEqual(typeFindings.length, 0);
 			}
@@ -370,8 +365,8 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data;
-				const typeFindings = findings.filter(
-					f => f.message.includes('Missing "type" field'),
+				const typeFindings = findings.filter((f) =>
+					f.message.includes('Missing "type" field'),
 				);
 				assert.strictEqual(typeFindings.length, 0);
 			}

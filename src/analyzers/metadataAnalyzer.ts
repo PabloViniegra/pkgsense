@@ -137,8 +137,7 @@ function checkDescription(pkg: AnalysisContext['packageJson']): Finding[] {
 		return [
 			{
 				type: 'info',
-				message:
-					'Description is very short. Consider adding more details.',
+				message: 'Description is very short. Consider adding more details.',
 				tags: [FINDING_TAGS.PACKAGING, FINDING_TAGS.QUALITY],
 			},
 		];

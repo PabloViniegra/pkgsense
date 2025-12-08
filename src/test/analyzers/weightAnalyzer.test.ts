@@ -14,7 +14,9 @@ import { CONSTANTS } from '../../shared/constants';
 suite('WeightAnalyzer Test Suite', () => {
 	const createContext = (
 		allDependencies: Record<string, string>,
-		dependencyRanges: Readonly<Record<string, import('../../analyzers/types').LineRange>> = {},
+		dependencyRanges: Readonly<
+			Record<string, import('../../analyzers/types').LineRange>
+		> = {},
 	): AnalysisContext => ({
 		packageJson: {},
 		allDependencies,
