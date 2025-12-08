@@ -14,7 +14,19 @@
 		"vscode": "^1.106.1"
 	},
 	"categories": [
-		"Other"
+		"Linters",
+		"Programming Languages"
+	],
+	"keywords": [
+		"package.json",
+		"npm",
+		"dependencies",
+		"security",
+		"bundlephobia",
+		"vulnerabilities",
+		"deprecated",
+		"nodejs",
+		"node"
 	],
 	"activationEvents": [
 		"onLanguage:json",
@@ -30,10 +42,7 @@
 		]
 	},
 	"scripts": {
-		"vscode:prepublish": "pnpm run esbuild-prod",
-		"esbuild-prod": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --minify",
-		"esbuild": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-		"esbuild-watch": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
+		"vscode:prepublish": "pnpm run compile",
 		"compile": "tsc -p ./",
 		"watch": "tsc -watch -p ./",
 		"pretest": "pnpm run compile && pnpm run lint",
@@ -41,7 +50,7 @@
 		"format": "biome format --write .",
 		"test": "vscode-test",
 		"package": "vsce package --no-dependencies",
-		"publish": "vsce publish"
+		"publish": "vsce publish --no-dependencies"
 	},
 	"dependencies": {
 		"node-fetch": "2.6.7"
