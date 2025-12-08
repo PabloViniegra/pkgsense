@@ -19,6 +19,11 @@ export const FINDING_TAGS = {
 	CONFIG: 'config',
 	PERFORMANCE: 'performance',
 	SECURITY: 'security',
+	LICENSE: 'license',
+	UPDATES: 'updates',
+	ENGINES: 'engines',
+	SCRIPTS: 'scripts',
+	DEPENDENCIES: 'dependencies',
 } as const;
 
 export type FindingTag = (typeof FINDING_TAGS)[keyof typeof FINDING_TAGS];
@@ -65,11 +70,39 @@ export type CreateFinding<S extends Severity = Severity> = Omit<
 export interface PackageJson {
 	readonly name?: string;
 	readonly version?: string;
+	readonly description?: string;
+	readonly keywords?: readonly string[];
+	readonly author?:
+		| string
+		| {
+				readonly name: string;
+				readonly email?: string;
+				readonly url?: string;
+		  };
+	readonly license?: string;
 	readonly dependencies?: Readonly<Record<string, string>>;
 	readonly devDependencies?: Readonly<Record<string, string>>;
+	readonly peerDependencies?: Readonly<Record<string, string>>;
 	readonly scripts?: Readonly<Record<string, string>>;
 	readonly files?: readonly string[];
 	readonly type?: 'module' | 'commonjs';
+	readonly repository?:
+		| string
+		| {
+				readonly type: string;
+				readonly url: string;
+		  };
+	readonly bugs?:
+		| string
+		| {
+				readonly url: string;
+				readonly email?: string;
+		  };
+	readonly homepage?: string;
+	readonly engines?: {
+		readonly node?: string;
+		readonly npm?: string;
+	};
 	readonly [key: string]: unknown; // Allow other fields
 }
 

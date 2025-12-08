@@ -53,13 +53,16 @@
 		"publish": "vsce publish --no-dependencies"
 	},
 	"dependencies": {
-		"node-fetch": "2.6.7"
+		"lru-cache": "^11.2.4",
+		"node-fetch": "2.6.7",
+		"semver": "^7.7.3"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.4",
 		"@types/mocha": "^10.0.10",
 		"@types/node": "22.x",
 		"@types/node-fetch": "^2.6.13",
+		"@types/semver": "^7.7.1",
 		"@types/vscode": "^1.106.1",
 		"@vscode/test-cli": "^0.0.12",
 		"@vscode/test-electron": "^2.5.2",
@@ -67,6 +70,7 @@
 		"esbuild": "^0.27.1",
 		"eslint": "^9.39.1",
 		"mocha": "^11.7.5",
+		"nock": "^14.0.10",
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.48.1"
 	}
