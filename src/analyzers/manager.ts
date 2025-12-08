@@ -4,6 +4,11 @@ import { CONSTANTS } from '../shared/constants';
 import { type Result, failure, success } from '../shared/result';
 import { type Finding, isPackageJson } from '../types';
 import {
+	createDependencyGraphAnalyzer,
+	dependencyGraphAnalyzer,
+} from './dependencyGraphAnalyzer';
+import { createEngineAnalyzer, engineAnalyzer } from './engineAnalyzer';
+import {
 	createHeuristicsAnalyzer,
 	heuristicsAnalyzer,
 } from './heuristicsAnalyzer';
@@ -49,6 +54,8 @@ function createDefaultAnalyzers(): Analyzer[] {
 		createScriptAnalyzer(),
 		createLicenseAnalyzer(),
 		createUpdateAnalyzer(),
+		createEngineAnalyzer(),
+		createDependencyGraphAnalyzer(),
 	];
 }
 
