@@ -75,7 +75,7 @@ export interface PackageJson {
 
 // Type guard with more comprehensive validation
 export function isPackageJson(data: unknown): data is PackageJson {
-	if (typeof data !== 'object' || data === null) {
+	if (typeof data !== 'object' || data === null || Array.isArray(data)) {
 		return false;
 	}
 
@@ -142,7 +142,7 @@ export function isPackageJson(data: unknown): data is PackageJson {
 
 // Helper type guards
 function isStringRecord(value: unknown): value is Record<string, string> {
-	if (typeof value !== 'object' || value === null) {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
 		return false;
 	}
 

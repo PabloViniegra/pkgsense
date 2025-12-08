@@ -16,6 +16,7 @@ import type { Finding } from '../types';
  */
 export class DiagnosticsManager {
 	private collection: vscode.DiagnosticCollection;
+	private disposed = false;
 
 	/**
 	 * Creates a new DiagnosticsManager.
@@ -29,8 +30,13 @@ export class DiagnosticsManager {
 	/**
 	 * Disposes of the diagnostic collection and clears all diagnostics.
 	 * Should be called when the extension is deactivated.
+	 * Safe to call multiple times.
 	 */
 	dispose() {
+		if (this.disposed) {
+			return;
+		}
+		this.disposed = true;
 		this.collection.clear();
 		this.collection.dispose();
 	}
@@ -68,7 +74,10 @@ export class DiagnosticsManager {
 						? vscode.DiagnosticSeverity.Warning
 						: vscode.DiagnosticSeverity.Information;
 
-			const d = new vscode.Diagnostic(range, f.message, sev);
+			// VS Code requires non-empty message
+			const message = f.message.trim() || '(No message provided)';
+
+			const d = new vscode.Diagnostic(range, message, sev);
 			d.source = CONSTANTS.DIAGNOSTIC_SOURCE;
 			if (f.dependency) d.code = f.dependency;
 			return d;

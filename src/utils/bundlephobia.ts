@@ -60,8 +60,10 @@ function sanitizePackageName(name: string): Result<string, string> {
 		);
 	}
 
-	const validNameRegex =
-		/^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
+	// npm package name validation
+	// Allows: lowercase letters, numbers, hyphens, dots, underscores
+	// Allows scoped packages: @scope/package-name
+	const validNameRegex = /^(@[a-z0-9-._]+\/)?[a-z0-9-._]+$/;
 	if (!validNameRegex.test(trimmed)) {
 		return failure('Invalid package name: contains invalid characters');
 	}
