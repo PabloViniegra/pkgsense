@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import type { AnalyzerType } from '../config/analyzerConfig';
+import { getEnabledAnalyzers } from '../config/analyzerConfig';
 import type { DiagnosticsManager } from '../decorators/diagnostics';
 import { NotificationManager } from '../decorators/notifications';
 import { CONSTANTS } from '../shared/constants';
@@ -42,22 +44,46 @@ export interface AnalysisManagerConfig {
 }
 
 /**
+ * Maps analyzer types to their factory functions.
+ * Enables dynamic analyzer creation based on configuration.
+ */
+const ANALYZER_FACTORIES: Record<AnalyzerType, () => Analyzer> = {
+	heuristics: createHeuristicsAnalyzer,
+	weight: createWeightAnalyzer,
+	vulnerability: createVulnerabilityAnalyzer,
+	metadata: createMetadataAnalyzer,
+	script: createScriptAnalyzer,
+	license: createLicenseAnalyzer,
+	update: createUpdateAnalyzer,
+	engine: createEngineAnalyzer,
+	dependencyGraph: createDependencyGraphAnalyzer,
+};
+
+/**
  * Default analyzers configuration.
  * Following Open/Closed Principle - new analyzers can be added
  * without modifying the manager.
+ *
+ * Respects user configuration to enable/disable analyzers.
  */
 function createDefaultAnalyzers(): Analyzer[] {
-	return [
-		createHeuristicsAnalyzer(),
-		createWeightAnalyzer(),
-		createVulnerabilityAnalyzer(),
-		createMetadataAnalyzer(),
-		createScriptAnalyzer(),
-		createLicenseAnalyzer(),
-		createUpdateAnalyzer(),
-		createEngineAnalyzer(),
-		createDependencyGraphAnalyzer(),
-	];
+	const enabledAnalyzers = getEnabledAnalyzers();
+
+	// If no analyzers are enabled, return empty array
+	if (enabledAnalyzers.length === 0) {
+		return [];
+	}
+
+	// Create only the enabled analyzers, with validation
+	return enabledAnalyzers
+		.filter((type) => {
+			if (!(type in ANALYZER_FACTORIES)) {
+				console.error(`Unknown analyzer type: ${type}`);
+				return false;
+			}
+			return true;
+		})
+		.map((type) => ANALYZER_FACTORIES[type]());
 }
 
 /**
@@ -332,6 +358,14 @@ function getDefaultManager(): AnalysisManager {
 		defaultManager = new AnalysisManager();
 	}
 	return defaultManager;
+}
+
+/**
+ * Reset the default AnalysisManager.
+ * Called when configuration changes to recreate analyzers with new settings.
+ */
+export function resetDefaultManager(): void {
+	defaultManager = null;
 }
 
 /**

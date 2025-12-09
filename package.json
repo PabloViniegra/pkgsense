@@ -2,7 +2,7 @@
 	"name": "pkgsense",
 	"displayName": "pkg Sense",
 	"description": "Is the essential extension for any Node.js project, offering deep and intelligent insight into your package.json file. Forget the uncertainty about your dependencies. Transform your main configuration file into an interactive dashboard, ensuring your project is robust, efficient, and always up-to-date.",
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"publisher": "PabloViniegra",
 	"license": "MIT",
 	"icon": "public/logo.png",
@@ -49,7 +49,62 @@
 				"command": "pkgsense.fixVulnerability",
 				"title": "Fix Vulnerability"
 			}
-		]
+		],
+		"configuration": {
+			"title": "pkgsense",
+			"properties": {
+				"pkgsense.enableAnalyzers": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable or disable all analyzers globally. When disabled, no analysis will be performed on package.json files."
+				},
+				"pkgsense.analyzers.heuristics": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable the heuristics analyzer (detects deprecated packages, duplicate dependencies, missing scripts, etc.)."
+				},
+				"pkgsense.analyzers.weight": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable the weight analyzer (fetches bundle size data from Bundlephobia)."
+				},
+				"pkgsense.analyzers.vulnerability": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable the vulnerability analyzer (checks for security vulnerabilities)."
+				},
+				"pkgsense.analyzers.metadata": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable the metadata analyzer (validates package.json metadata fields)."
+				},
+				"pkgsense.analyzers.script": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable the script analyzer (analyzes npm scripts)."
+				},
+				"pkgsense.analyzers.license": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable the license analyzer (checks dependency licenses)."
+				},
+				"pkgsense.analyzers.update": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable the update analyzer (checks for outdated dependencies)."
+				},
+				"pkgsense.analyzers.engine": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable the engine analyzer (validates Node.js and npm engine requirements)."
+				},
+				"pkgsense.analyzers.dependencyGraph": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable the dependency graph analyzer (analyzes dependency relationships)."
+				}
+			}
+		}
 	},
 	"scripts": {
 		"vscode:prepublish": "pnpm run package",
