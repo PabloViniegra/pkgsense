@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import { CONSTANTS } from '../shared/constants';
-import { fetchLatestVersion as fetchLatestVersionFromRegistry } from '../utils/npmRegistry';
 
 /**
  * Command handlers for package.json modifications.
@@ -87,7 +86,7 @@ export async function updateDependencyCommand(
 				const packageJson = JSON.parse(text);
 
 				// Fetch latest version from npm
-				const latestVersion = await getLatestVersionForCommand(packageName);
+				const latestVersion = await fetchLatestVersion(packageName);
 
 				if (!latestVersion) {
 					vscode.window.showWarningMessage(
@@ -216,12 +215,32 @@ export async function fixVulnerabilityCommand(
 }
 
 /**
- * Fetches the latest version of a package using the shared npm registry utility.
- * This is a thin wrapper that converts the Result type to a simple nullable string.
+ * Fetch the latest version of a package from npm registry.
  */
-async function getLatestVersionForCommand(
-	packageName: string,
-): Promise<string | null> {
-	const result = await fetchLatestVersionFromRegistry(packageName);
-	return result.success ? result.data : null;
+async function fetchLatestVersion(packageName: string): Promise<string | null> {
+	try {
+		const url = `${CONSTANTS.NPM_REGISTRY_URL}/${packageName}`;
+		const controller = new AbortController();
+		const timeoutId = setTimeout(
+			() => controller.abort(),
+			CONSTANTS.NPM_REGISTRY_TIMEOUT_MS,
+		);
+
+		const response = await fetch(url, {
+			signal: controller.signal,
+		});
+
+		clearTimeout(timeoutId);
+
+		if (!response.ok) {
+			return null;
+		}
+
+		const data = (await response.json()) as Record<string, unknown>;
+		const distTags = data['dist-tags'] as Record<string, unknown> | undefined;
+		return (distTags?.['latest'] as string) || null;
+	} catch (error) {
+		console.error(`Failed to fetch latest version for ${packageName}:`, error);
+		return null;
+	}
 }
