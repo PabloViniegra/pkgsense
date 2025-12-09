@@ -28,43 +28,17 @@ export const FINDING_TAGS = {
 
 export type FindingTag = (typeof FINDING_TAGS)[keyof typeof FINDING_TAGS];
 
-// Discriminated union for different types of findings
-export type Finding =
-	| {
-			readonly id?: string;
-			readonly type: 'info';
-			readonly message: string;
-			readonly dependency?: string;
-			readonly range?: vscode.Range;
-			readonly tags?: readonly FindingTag[];
-			readonly meta?: unknown;
-	  }
-	| {
-			readonly id?: string;
-			readonly type: 'warning';
-			readonly message: string;
-			readonly dependency?: string;
-			readonly range?: vscode.Range;
-			readonly tags?: readonly FindingTag[];
-			readonly meta?: unknown;
-	  }
-	| {
-			readonly id?: string;
-			readonly type: 'error';
-			readonly message: string;
-			readonly dependency?: string;
-			readonly range?: vscode.Range;
-			readonly tags?: readonly FindingTag[];
-			readonly meta?: unknown;
-	  };
-
-// Helper type for creating findings with better type inference
-export type CreateFinding<S extends Severity = Severity> = Omit<
-	Extract<Finding, { type: S }>,
-	'type'
-> & {
-	type: S;
-};
+// Finding interface with discriminated type property
+// Using a single interface instead of union since all branches were identical
+export interface Finding {
+	readonly id?: string;
+	readonly type: Severity;
+	readonly message: string;
+	readonly dependency?: string;
+	readonly range?: vscode.Range;
+	readonly tags?: readonly FindingTag[];
+	readonly meta?: Readonly<Record<string, unknown>>;
+}
 
 // PackageJson with stricter typing
 export interface PackageJson {
@@ -114,16 +88,17 @@ export function isPackageJson(data: unknown): data is PackageJson {
 
 	const obj = data as Record<string, unknown>;
 
+	// Using bracket notation throughout due to TypeScript strictIndexSignatureKeys
 	// Check optional name field
-	if ('name' in obj && typeof obj.name !== 'string' && obj.name !== undefined) {
+	if ('name' in obj && typeof obj['name'] !== 'string' && obj['name'] !== undefined) {
 		return false;
 	}
 
 	// Check optional version field
 	if (
 		'version' in obj &&
-		typeof obj.version !== 'string' &&
-		obj.version !== undefined
+		typeof obj['version'] !== 'string' &&
+		obj['version'] !== undefined
 	) {
 		return false;
 	}
@@ -131,8 +106,8 @@ export function isPackageJson(data: unknown): data is PackageJson {
 	// Check optional dependencies
 	if (
 		'dependencies' in obj &&
-		obj.dependencies !== undefined &&
-		!isStringRecord(obj.dependencies)
+		obj['dependencies'] !== undefined &&
+		!isStringRecord(obj['dependencies'])
 	) {
 		return false;
 	}
@@ -140,8 +115,8 @@ export function isPackageJson(data: unknown): data is PackageJson {
 	// Check optional devDependencies
 	if (
 		'devDependencies' in obj &&
-		obj.devDependencies !== undefined &&
-		!isStringRecord(obj.devDependencies)
+		obj['devDependencies'] !== undefined &&
+		!isStringRecord(obj['devDependencies'])
 	) {
 		return false;
 	}
@@ -149,23 +124,23 @@ export function isPackageJson(data: unknown): data is PackageJson {
 	// Check optional scripts
 	if (
 		'scripts' in obj &&
-		obj.scripts !== undefined &&
-		!isStringRecord(obj.scripts)
+		obj['scripts'] !== undefined &&
+		!isStringRecord(obj['scripts'])
 	) {
 		return false;
 	}
 
 	// Check optional files array
-	if ('files' in obj && obj.files !== undefined && !isStringArray(obj.files)) {
+	if ('files' in obj && obj['files'] !== undefined && !isStringArray(obj['files'])) {
 		return false;
 	}
 
 	// Check optional type field
 	if (
 		'type' in obj &&
-		obj.type !== undefined &&
-		obj.type !== 'module' &&
-		obj.type !== 'commonjs'
+		obj['type'] !== undefined &&
+		obj['type'] !== 'module' &&
+		obj['type'] !== 'commonjs'
 	) {
 		return false;
 	}

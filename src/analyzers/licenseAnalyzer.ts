@@ -1,8 +1,30 @@
 import { CONSTANTS } from '../shared/constants';
 import { type Result, failure, success } from '../shared/result';
 import { FINDING_TAGS, type Finding } from '../types';
-import { fetchPackageLicense } from '../utils/npmRegistry';
+import { fetchPackageLicense as defaultFetchPackageLicense } from '../utils/npmRegistry';
 import type { Analyzer, AnalysisContext, AnalyzerError } from './types';
+
+/**
+ * Dependencies for the license analyzer.
+ * Following Dependency Inversion Principle - depend on abstractions.
+ */
+export interface LicenseAnalyzerDeps {
+	/**
+	 * Function to fetch package license information.
+	 * Injected to enable testing with mock implementations.
+	 */
+	readonly fetchPackageLicense: (
+		packageName: string,
+		version?: string,
+	) => Promise<Result<string, string>>;
+}
+
+/**
+ * Default dependencies using the real NPM registry API.
+ */
+const DEFAULT_DEPS: LicenseAnalyzerDeps = {
+	fetchPackageLicense: defaultFetchPackageLicense,
+};
 
 /**
  * License Analyzer - Detects license conflicts and issues.
@@ -63,28 +85,33 @@ function isCopyleftLicense(license: string): boolean {
 }
 
 /**
- * Fetches licenses for all dependencies.
+ * Creates a function to fetch licenses for all dependencies.
+ * Uses dependency injection for the fetch function.
  */
-async function fetchDependencyLicenses(
-	dependencies: Record<string, string>,
-): Promise<Map<string, string>> {
-	const licenses = new Map<string, string>();
+function createFetchDependencyLicenses(
+	fetchLicense: LicenseAnalyzerDeps['fetchPackageLicense'],
+) {
+	return async function fetchDependencyLicenses(
+		dependencies: Record<string, string>,
+	): Promise<Map<string, string>> {
+		const licenses = new Map<string, string>();
 
-	// Fetch licenses in batches to respect rate limiting
-	const entries = Object.entries(dependencies);
+		// Fetch licenses in batches to respect rate limiting
+		const entries = Object.entries(dependencies);
 
-	for (const [packageName, version] of entries) {
-		const result = await fetchPackageLicense(packageName, version);
+		for (const [packageName, version] of entries) {
+			const result = await fetchLicense(packageName, version);
 
-		if (result.success) {
-			licenses.set(packageName, result.data);
-		} else {
-			// If we can't fetch license, mark as unknown
-			licenses.set(packageName, 'UNKNOWN');
+			if (result.success) {
+				licenses.set(packageName, result.data);
+			} else {
+				// If we can't fetch license, mark as unknown
+				licenses.set(packageName, 'UNKNOWN');
+			}
 		}
-	}
 
-	return licenses;
+		return licenses;
+	};
 }
 
 /**
@@ -181,48 +208,62 @@ function checkLicenseConflicts(
 }
 
 /**
- * Analyzes licenses for the package and its dependencies.
+ * Creates an analyze function with injected dependencies.
  */
-async function analyze(
-	context: AnalysisContext,
-): Promise<Result<Finding[], AnalyzerError>> {
-	const findings: Finding[] = [];
-	const pkg = context.packageJson;
+function createAnalyze(deps: LicenseAnalyzerDeps) {
+	const fetchDependencyLicenses = createFetchDependencyLicenses(
+		deps.fetchPackageLicense,
+	);
 
-	// Skip if no dependencies
-	if (
-		!context.allDependencies ||
-		Object.keys(context.allDependencies).length === 0
-	) {
-		return success(findings);
-	}
+	return async function analyze(
+		context: AnalysisContext,
+	): Promise<Result<Finding[], AnalyzerError>> {
+		const findings: Finding[] = [];
+		const pkg = context.packageJson;
 
-	try {
-		// Fetch licenses for all dependencies
-		const licenses = await fetchDependencyLicenses(context.allDependencies);
+		// Skip if no dependencies
+		if (
+			!context.allDependencies ||
+			Object.keys(context.allDependencies).length === 0
+		) {
+			return success(findings);
+		}
 
-		// Check for conflicts
-		findings.push(...checkLicenseConflicts(licenses, pkg.license));
+		try {
+			// Fetch licenses for all dependencies
+			const licenses = await fetchDependencyLicenses(context.allDependencies);
 
-		return success(findings);
-	} catch (error) {
-		return failure({
-			code: 'LICENSE_ANALYSIS_ERROR',
-			message:
-				error instanceof Error ? error.message : 'Failed to analyze licenses',
-		});
-	}
+			// Check for conflicts
+			findings.push(...checkLicenseConflicts(licenses, pkg.license));
+
+			return success(findings);
+		} catch (error) {
+			return failure({
+				code: 'LICENSE_ANALYSIS_ERROR',
+				message:
+					error instanceof Error ? error.message : 'Failed to analyze licenses',
+			});
+		}
+	};
 }
 
 /**
- * Creates a LicenseAnalyzer instance.
+ * Creates a LicenseAnalyzer instance with optional dependency injection.
  *
+ * Factory pattern with dependency injection enables:
+ * - Testing with mock license fetch implementations
+ * - Swapping API providers without changing analyzer logic
+ * - Dependency inversion principle compliance
+ *
+ * @param deps - Optional dependencies to inject (defaults to real NPM registry API)
  * @returns Analyzer instance for license analysis
  */
-export function createLicenseAnalyzer(): Analyzer {
+export function createLicenseAnalyzer(
+	deps: LicenseAnalyzerDeps = DEFAULT_DEPS,
+): Analyzer {
 	return {
 		name: 'license',
-		analyze,
+		analyze: createAnalyze(deps),
 	};
 }
 

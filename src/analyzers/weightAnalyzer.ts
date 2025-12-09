@@ -53,33 +53,42 @@ function categorizePackageSize(
 		: undefined;
 
 	if (size > CONSTANTS.PACKAGE_SIZE_LARGE_THRESHOLD) {
-		return {
+		const finding: Finding = {
 			type: 'error',
 			message: `Very heavy package: ${name}@${version} - ${sizeInKB} KB`,
 			dependency: name,
-			range: vscodeRange,
 			tags: [FINDING_TAGS.PERFORMANCE],
 		};
+		if (vscodeRange) {
+			return { ...finding, range: vscodeRange };
+		}
+		return finding;
 	}
 
 	if (size > CONSTANTS.PACKAGE_SIZE_MEDIUM_THRESHOLD) {
-		return {
+		const finding: Finding = {
 			type: 'warning',
 			message: `Heavy package: ${name}@${version} - ${sizeInKB} KB`,
 			dependency: name,
-			range: vscodeRange,
 			tags: [FINDING_TAGS.PERFORMANCE],
 		};
+		if (vscodeRange) {
+			return { ...finding, range: vscodeRange };
+		}
+		return finding;
 	}
 
 	if (size > CONSTANTS.PACKAGE_SIZE_SMALL_THRESHOLD) {
-		return {
+		const finding: Finding = {
 			type: 'info',
 			message: `Moderately large package: ${name}@${version}`,
 			dependency: name,
-			range: vscodeRange,
 			tags: [FINDING_TAGS.PERFORMANCE],
 		};
+		if (vscodeRange) {
+			return { ...finding, range: vscodeRange };
+		}
+		return finding;
 	}
 
 	return null;
@@ -165,31 +174,32 @@ export async function weightAnalyzer(
 
 		const { size } = result.data;
 		const sizeInKB = (size / CONSTANTS.BYTES_TO_KB).toFixed(1);
+		const range = depRanges[name];
 
 		if (size > CONSTANTS.PACKAGE_SIZE_LARGE_THRESHOLD) {
-			findings.push({
+			const finding: Finding = {
 				type: 'error',
 				message: `Very heavy package: ${name}@${version} - ${sizeInKB} KB`,
 				dependency: name,
-				range: depRanges[name],
 				tags: [FINDING_TAGS.PERFORMANCE],
-			});
+			};
+			findings.push(range ? { ...finding, range } : finding);
 		} else if (size > CONSTANTS.PACKAGE_SIZE_MEDIUM_THRESHOLD) {
-			findings.push({
+			const finding: Finding = {
 				type: 'warning',
 				message: `Heavy package: ${name}@${version} - ${sizeInKB} KB`,
 				dependency: name,
-				range: depRanges[name],
 				tags: [FINDING_TAGS.PERFORMANCE],
-			});
+			};
+			findings.push(range ? { ...finding, range } : finding);
 		} else if (size > CONSTANTS.PACKAGE_SIZE_SMALL_THRESHOLD) {
-			findings.push({
+			const finding: Finding = {
 				type: 'info',
 				message: `Moderately large package: ${name}@${version}`,
 				dependency: name,
-				range: depRanges[name],
 				tags: [FINDING_TAGS.PERFORMANCE],
-			});
+			};
+			findings.push(range ? { ...finding, range } : finding);
 		}
 	}
 

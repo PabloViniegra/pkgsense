@@ -108,3 +108,89 @@ export function isSuccess<T, E>(result: Result<T, E>): result is Success<T> {
 export function isFailure<T, E>(result: Result<T, E>): result is Failure<E> {
 	return !result.success;
 }
+
+/**
+ * Represents an operation that cannot fail.
+ * Use this for operations that always succeed instead of Result<T, never>.
+ *
+ * @template T - The type of the success data
+ *
+ * @example
+ * ```typescript
+ * async function alwaysSucceeds(): Promise<InfallibleResult<number>> {
+ *   return infallible(42);
+ * }
+ * ```
+ */
+export type InfallibleResult<T> = Success<T>;
+
+/**
+ * Creates an infallible result (operation that cannot fail).
+ * This is semantically clearer than success() for operations that cannot fail.
+ *
+ * @template T - The type of the success data
+ * @param data - The success data to wrap
+ * @returns An InfallibleResult containing the data
+ *
+ * @example
+ * ```typescript
+ * const result = infallible(42);
+ * // result.data === 42, no need to check result.success
+ * ```
+ */
+export function infallible<T>(data: T): InfallibleResult<T> {
+	return { success: true, data };
+}
+
+/**
+ * Maps a Result to a new Result by applying a function to the success value.
+ *
+ * @template T - The type of the input success data
+ * @template U - The type of the output success data
+ * @template E - The type of the error
+ * @param result - The Result to map
+ * @param fn - The function to apply to the success value
+ * @returns A new Result with the mapped value
+ *
+ * @example
+ * ```typescript
+ * const result = success(42);
+ * const doubled = mapResult(result, x => x * 2);
+ * // doubled.data === 84
+ * ```
+ */
+export function mapResult<T, U, E>(
+	result: Result<T, E>,
+	fn: (value: T) => U,
+): Result<U, E> {
+	if (result.success) {
+		return success(fn(result.data));
+	}
+	return result;
+}
+
+/**
+ * Chains Results together, propagating failures.
+ *
+ * @template T - The type of the input success data
+ * @template U - The type of the output success data
+ * @template E - The type of the error
+ * @param result - The Result to chain
+ * @param fn - The function that returns a new Result
+ * @returns The result of fn if input succeeded, otherwise the input failure
+ *
+ * @example
+ * ```typescript
+ * const result = success(42);
+ * const chained = flatMapResult(result, x => success(x * 2));
+ * ```
+ */
+export function flatMapResult<T, U, E>(
+	result: Result<T, E>,
+	fn: (value: T) => Result<U, E>,
+): Result<U, E> {
+	if (result.success) {
+		return fn(result.data);
+	}
+	return result;
+}

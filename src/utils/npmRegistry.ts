@@ -41,10 +41,11 @@ function isNpmPackageMetadata(data: unknown): data is NpmPackageMetadata {
 
 	const obj = data as Record<string, unknown>;
 
+	// Using bracket notation due to TypeScript strict indexing with Record<string, unknown>
 	return (
-		typeof obj.name === 'string' &&
-		typeof obj.versions === 'object' &&
-		obj.versions !== null &&
+		typeof obj['name'] === 'string' &&
+		typeof obj['versions'] === 'object' &&
+		obj['versions'] !== null &&
 		typeof obj['dist-tags'] === 'object' &&
 		obj['dist-tags'] !== null
 	);
@@ -121,7 +122,13 @@ export async function fetchPackageMetadata(
 			const url = `${NPM_REGISTRY_URL}/${encodeURIComponent(trimmedName)}`;
 			const controller = createAbortController(FETCH_TIMEOUT_MS);
 
-			const response = await fetch(url, { signal: controller.signal });
+			// Type cast required due to node-fetch vs DOM AbortSignal incompatibility
+			// The node-fetch library expects a different AbortSignal type than the DOM standard
+			// This is a known limitation and the cast is safe in this context
+			const response = await fetch(url, {
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				signal: controller.signal as any,
+			});
 
 			if (!response.ok) {
 				// 404 means package doesn't exist, don't retry

@@ -148,7 +148,8 @@ function checkInefficiencyPatterns(
 function checkTestScript(scripts: Record<string, string>): Finding[] {
 	const findings: Finding[] = [];
 
-	if (!scripts.test) {
+	// Using bracket notation due to TypeScript strict indexing with Record<string, string>
+	if (!scripts['test']) {
 		findings.push({
 			type: 'info',
 			message:
@@ -159,7 +160,7 @@ function checkTestScript(scripts: Record<string, string>): Finding[] {
 	}
 
 	// Check for placeholder test scripts
-	const testScript = scripts.test.toLowerCase();
+	const testScript = scripts['test'].toLowerCase();
 	const placeholders = [
 		'echo "error: no test specified"',
 		'echo error: no test specified',

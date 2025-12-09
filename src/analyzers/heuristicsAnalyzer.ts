@@ -11,7 +11,7 @@ interface DeprecatedPackageRule {
 	readonly suggestion: string;
 }
 
-const DEPRECATED_PACKAGES: readonly DeprecatedPackageRule[] = [
+const DEPRECATED_PACKAGES = [
 	{
 		pkg: 'moment',
 		suggestion:
@@ -25,7 +25,13 @@ const DEPRECATED_PACKAGES: readonly DeprecatedPackageRule[] = [
 		pkg: 'left-pad',
 		suggestion: 'Unnecessary package.',
 	},
-] as const;
+] as const satisfies readonly DeprecatedPackageRule[];
+
+/**
+ * Union type of all deprecated package names.
+ * Automatically derived from the DEPRECATED_PACKAGES array.
+ */
+type DeprecatedPackageName = (typeof DEPRECATED_PACKAGES)[number]['pkg'];
 
 /**
  * Check for deprecated or problematic packages.
@@ -78,7 +84,8 @@ function checkDuplicateDependencies(json: PackageJson): Finding[] {
  * Pure function - no side effects.
  */
 function checkTestScript(json: PackageJson): Finding[] {
-	const hasTestScript = json.scripts?.test;
+	// Using bracket notation due to TypeScript strict indexing with Record<string, string>
+	const hasTestScript = json.scripts?.['test'];
 	const hasValidTest = hasTestScript && !hasTestScript.includes('no test');
 
 	if (!hasValidTest) {

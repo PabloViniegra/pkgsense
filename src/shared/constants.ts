@@ -65,6 +65,9 @@ export const CONSTANTS = {
 		'license',
 	],
 
+	// Metadata validation
+	MIN_DESCRIPTION_LENGTH: 10,
+
 	// User messages
 	ERROR_NO_EDITOR: 'Open the package.json to analyze it',
 	INFO_ANALYSIS_COMPLETED: 'package.json analysis completed',

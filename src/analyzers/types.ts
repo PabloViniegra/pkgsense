@@ -76,9 +76,19 @@ export interface Analyzer {
  * Factory function type for creating analyzers.
  * Enables dependency injection of external services.
  */
-export type AnalyzerFactory<TDeps = void> = TDeps extends void
-	? () => Analyzer
-	: (deps: TDeps) => Analyzer;
+export type AnalyzerFactoryNoDeps = () => Analyzer;
+export type AnalyzerFactoryWithDeps<TDeps> = (deps: TDeps) => Analyzer;
+
+export type AnalyzerFactory<TDeps = never> = [TDeps] extends [never]
+	? AnalyzerFactoryNoDeps
+	: AnalyzerFactoryWithDeps<TDeps>;
+
+/**
+ * Helper to extract dependencies type from an analyzer factory.
+ */
+export type ExtractAnalyzerDeps<T> = T extends AnalyzerFactoryWithDeps<infer D>
+	? D
+	: never;
 
 /**
  * Error codes for AnalysisManager failures.

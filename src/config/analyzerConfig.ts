@@ -40,9 +40,7 @@ export interface AnalyzerConfiguration {
 	/** Master switch - when false, no analyzers run */
 	readonly globalEnabled: boolean;
 	/** Individual analyzer settings */
-	readonly analyzers: {
-		readonly [K in AnalyzerType]: boolean;
-	};
+	readonly analyzers: Record<AnalyzerType, boolean>;
 }
 
 /**

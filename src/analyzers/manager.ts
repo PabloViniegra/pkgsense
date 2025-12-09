@@ -168,11 +168,14 @@ function convertFindingsToVscode(
 		}
 
 		// If finding has a dependency, try to get its range
-		if (finding.dependency && dependencyRanges[finding.dependency]) {
-			return {
-				...finding,
-				range: toVscodeRange(dependencyRanges[finding.dependency]),
-			};
+		if (finding.dependency) {
+			const depRange = dependencyRanges[finding.dependency];
+			if (depRange) {
+				return {
+					...finding,
+					range: toVscodeRange(depRange),
+				};
+			}
 		}
 
 		return finding;
@@ -300,6 +303,12 @@ export class AnalysisManager {
 		for (let i = 0; i < results.length; i++) {
 			const result = results[i];
 			const analyzer = this.analyzers[i];
+
+			// Guard against undefined (should never happen with proper indexing)
+			if (!result || !analyzer) {
+				console.error(`Missing result or analyzer at index ${i}`);
+				continue;
+			}
 
 			if (result.status === 'fulfilled') {
 				if (result.value.success) {
