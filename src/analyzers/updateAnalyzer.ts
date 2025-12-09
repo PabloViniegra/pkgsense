@@ -1,7 +1,7 @@
 import { CONSTANTS } from '../shared/constants';
 import { type Result, failure, success } from '../shared/result';
 import { FINDING_TAGS, type Finding } from '../types';
-import { fetchLatestVersion } from '../utils/npmRegistry';
+import { fetchLatestVersion as defaultFetchLatestVersion } from '../utils/npmRegistry';
 import {
 	getUpdateType,
 	isPreRelease,
@@ -9,6 +9,27 @@ import {
 	type UpdateType,
 } from '../utils/semverHelper';
 import type { Analyzer, AnalysisContext, AnalyzerError } from './types';
+
+/**
+ * Dependencies for the update analyzer.
+ * Following Dependency Inversion Principle - depend on abstractions.
+ */
+export interface UpdateAnalyzerDeps {
+	/**
+	 * Function to fetch latest version information.
+	 * Injected to enable testing with mock implementations.
+	 */
+	readonly fetchLatestVersion: (
+		packageName: string,
+	) => Promise<Result<string, string>>;
+}
+
+/**
+ * Default dependencies using the real NPM registry API.
+ */
+const DEFAULT_DEPS: UpdateAnalyzerDeps = {
+	fetchLatestVersion: defaultFetchLatestVersion,
+};
 
 /**
  * Update Analyzer - Detects outdated dependencies with available updates.
@@ -43,25 +64,30 @@ interface UpdateInfo {
 }
 
 /**
- * Fetches latest versions for all dependencies.
+ * Creates a function to fetch latest versions for all dependencies.
+ * Uses dependency injection for the fetch function.
  */
-async function fetchLatestVersions(
-	dependencies: Record<string, string>,
-): Promise<Map<string, string>> {
-	const latestVersions = new Map<string, string>();
+function createFetchLatestVersions(
+	fetchVersion: UpdateAnalyzerDeps['fetchLatestVersion'],
+) {
+	return async function fetchLatestVersions(
+		dependencies: Record<string, string>,
+	): Promise<Map<string, string>> {
+		const latestVersions = new Map<string, string>();
 
-	const entries = Object.entries(dependencies);
+		const entries = Object.entries(dependencies);
 
-	for (const [packageName, currentVersion] of entries) {
-		const result = await fetchLatestVersion(packageName);
+		for (const [packageName, currentVersion] of entries) {
+			const result = await fetchVersion(packageName);
 
-		if (result.success) {
-			latestVersions.set(packageName, result.data);
+			if (result.success) {
+				latestVersions.set(packageName, result.data);
+			}
+			// If fetch fails, skip this package (no update info available)
 		}
-		// If fetch fails, skip this package (no update info available)
-	}
 
-	return latestVersions;
+		return latestVersions;
+	};
 }
 
 /**
@@ -160,52 +186,66 @@ function createFindingsFromUpdates(updates: UpdateInfo[]): Finding[] {
 }
 
 /**
- * Analyzes dependencies for available updates.
+ * Creates an analyze function with injected dependencies.
  */
-async function analyze(
-	context: AnalysisContext,
-): Promise<Result<Finding[], AnalyzerError>> {
-	const findings: Finding[] = [];
+function createAnalyze(deps: UpdateAnalyzerDeps) {
+	const fetchLatestVersions = createFetchLatestVersions(
+		deps.fetchLatestVersion,
+	);
 
-	// Skip if no dependencies
-	if (
-		!context.allDependencies ||
-		Object.keys(context.allDependencies).length === 0
-	) {
-		return success(findings);
-	}
+	return async function analyze(
+		context: AnalysisContext,
+	): Promise<Result<Finding[], AnalyzerError>> {
+		const findings: Finding[] = [];
 
-	try {
-		// Fetch latest versions for all dependencies
-		const latestVersions = await fetchLatestVersions(context.allDependencies);
+		// Skip if no dependencies
+		if (
+			!context.allDependencies ||
+			Object.keys(context.allDependencies).length === 0
+		) {
+			return success(findings);
+		}
 
-		// Find updates by comparing versions
-		const updates = findUpdates(context.allDependencies, latestVersions);
+		try {
+			// Fetch latest versions for all dependencies
+			const latestVersions = await fetchLatestVersions(context.allDependencies);
 
-		// Convert updates to findings
-		const updateFindings = createFindingsFromUpdates(updates);
+			// Find updates by comparing versions
+			const updates = findUpdates(context.allDependencies, latestVersions);
 
-		findings.push(...updateFindings);
+			// Convert updates to findings
+			const updateFindings = createFindingsFromUpdates(updates);
 
-		return success(findings);
-	} catch (error) {
-		return failure({
-			code: 'UPDATE_ANALYSIS_ERROR',
-			message:
-				error instanceof Error ? error.message : 'Failed to analyze updates',
-		});
-	}
+			findings.push(...updateFindings);
+
+			return success(findings);
+		} catch (error) {
+			return failure({
+				code: 'UPDATE_ANALYSIS_ERROR',
+				message:
+					error instanceof Error ? error.message : 'Failed to analyze updates',
+			});
+		}
+	};
 }
 
 /**
- * Creates an UpdateAnalyzer instance.
+ * Creates an UpdateAnalyzer instance with optional dependency injection.
  *
+ * Factory pattern with dependency injection enables:
+ * - Testing with mock version fetch implementations
+ * - Swapping API providers without changing analyzer logic
+ * - Dependency inversion principle compliance
+ *
+ * @param deps - Optional dependencies to inject (defaults to real NPM registry API)
  * @returns Analyzer instance for update detection
  */
-export function createUpdateAnalyzer(): Analyzer {
+export function createUpdateAnalyzer(
+	deps: UpdateAnalyzerDeps = DEFAULT_DEPS,
+): Analyzer {
 	return {
 		name: 'update',
-		analyze,
+		analyze: createAnalyze(deps),
 	};
 }
 

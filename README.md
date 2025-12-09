@@ -117,7 +117,45 @@ When diagnostics appear in your `package.json`, look for the 💡 lightbulb icon
 
 ## ⚙️ Configuration
 
-pkgsense works out of the box with sensible defaults:
+pkgsense works out of the box with sensible defaults. You can customize analyzer behavior through VS Code settings.
+
+### Analyzer Settings (v1.2.0)
+
+Access settings via: **File > Preferences > Settings** (or **Code > Settings** on macOS), then search for "pkgsense".
+
+#### Global Analyzer Control
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `pkgsense.enableAnalyzers` | boolean | `true` | Master switch to enable/disable all analyzers. When disabled, no analysis will be performed. |
+
+#### Individual Analyzer Control
+
+Each analyzer can be enabled/disabled individually when `pkgsense.enableAnalyzers` is `true`:
+
+| Setting | Analyzer | Default | Description |
+|---------|----------|---------|-------------|
+| `pkgsense.analyzers.heuristics` | Heuristics | `true` | Detects deprecated packages, duplicate dependencies, missing scripts |
+| `pkgsense.analyzers.weight` | Bundle Size | `true` | Fetches package size data from Bundlephobia |
+| `pkgsense.analyzers.vulnerability` | Security | `true` | Checks for security vulnerabilities via npm audit |
+| `pkgsense.analyzers.metadata` | Metadata | `true` | Validates package.json metadata fields |
+| `pkgsense.analyzers.script` | Scripts | `true` | Analyzes npm scripts for issues |
+| `pkgsense.analyzers.license` | License | `true` | Checks dependency licenses for compliance |
+| `pkgsense.analyzers.update` | Updates | `true` | Detects outdated dependencies |
+| `pkgsense.analyzers.engine` | Engine | `true` | Validates Node.js and npm version requirements |
+| `pkgsense.analyzers.dependencyGraph` | Dependency Graph | `true` | Analyzes dependency relationships and conflicts |
+
+#### Example Configuration
+
+```json
+{
+  "pkgsense.enableAnalyzers": true,
+  "pkgsense.analyzers.weight": false,
+  "pkgsense.analyzers.vulnerability": true
+}
+```
+
+This configuration enables analysis but skips bundle size checks (useful for offline environments).
 
 ### Package Size Thresholds
 
@@ -213,7 +251,16 @@ pnpm run package
 
 ## 📝 Changelog
 
-### v1.1.0 (Latest)
+### v1.2.0 (Latest)
+
+**Parametrization & Configuration**
+- ⚙️ Added global analyzer enable/disable switch (`pkgsense.enableAnalyzers`)
+- 🎛️ Individual analyzer configuration for all 9 analyzers
+- 🔄 Real-time configuration updates without VS Code reload
+- 🧹 Automatic diagnostic cleanup when analyzers are disabled
+- 📚 Comprehensive configuration documentation
+
+### v1.1.0
 
 **Phase 2: Visual Enhancements**
 - ✨ Added progress indicators for long-running analysis

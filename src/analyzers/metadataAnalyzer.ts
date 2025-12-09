@@ -1,5 +1,5 @@
 import { CONSTANTS } from '../shared/constants';
-import { type Result, success } from '../shared/result';
+import { type InfallibleResult, infallible } from '../shared/result';
 import { FINDING_TAGS, type Finding } from '../types';
 import type { Analyzer, AnalysisContext } from './types';
 
@@ -132,8 +132,8 @@ function checkDescription(pkg: AnalysisContext['packageJson']): Finding[] {
 		];
 	}
 
-	// Warn if description is too short (less than 10 characters)
-	if (pkg.description.trim().length < 10) {
+	// Warn if description is too short
+	if (pkg.description.trim().length < CONSTANTS.MIN_DESCRIPTION_LENGTH) {
 		return [
 			{
 				type: 'info',
@@ -235,10 +235,11 @@ function checkLicense(pkg: AnalysisContext['packageJson']): Finding[] {
 
 /**
  * Analyzes package.json metadata for completeness and quality.
+ * This analyzer never fails - it always returns findings (even if empty).
  */
 async function analyze(
 	context: AnalysisContext,
-): Promise<Result<Finding[], never>> {
+): Promise<InfallibleResult<Finding[]>> {
 	const findings: Finding[] = [];
 	const pkg = context.packageJson;
 
@@ -251,7 +252,7 @@ async function analyze(
 	findings.push(...checkAuthor(pkg));
 	findings.push(...checkLicense(pkg));
 
-	return success(findings);
+	return infallible(findings);
 }
 
 /**

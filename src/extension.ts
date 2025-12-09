@@ -1,5 +1,12 @@
 import * as vscode from 'vscode';
-import { analyzePackageDocument } from './analyzers/manager';
+import {
+	analyzePackageDocument,
+	resetDefaultManager,
+} from './analyzers/manager';
+import {
+	getAnalyzerConfiguration,
+	hasAnalyzerConfigChanged,
+} from './config/analyzerConfig';
 import { PackageCodeActionProvider } from './decorators/codeActions';
 import { DiagnosticsManager } from './decorators/diagnostics';
 import {
@@ -109,6 +116,48 @@ export function activate(context: vscode.ExtensionContext) {
 		fixVulnerabilityCommand,
 	);
 	context.subscriptions.push(fixVulnerability);
+
+	// Register configuration change listener
+	// Use a flag to prevent race conditions from rapid config changes
+	let isReanalyzing = false;
+
+	const configListener = vscode.workspace.onDidChangeConfiguration(
+		async (event) => {
+			// Only handle analyzer configuration changes
+			if (!hasAnalyzerConfigChanged(event)) {
+				return;
+			}
+
+			// Prevent concurrent re-analyses
+			if (isReanalyzing) {
+				return;
+			}
+
+			isReanalyzing = true;
+			try {
+				// Reset the analysis manager to pick up new configuration
+				resetDefaultManager();
+
+				// Get current configuration
+				const config = getAnalyzerConfiguration();
+
+				// If all analyzers are disabled, clear all diagnostics
+				if (!config.globalEnabled) {
+					diagnostics.clear();
+					return;
+				}
+
+				// Re-analyze the current package.json if one is open
+				const editor = vscode.window.activeTextEditor;
+				if (editor) {
+					await analyzeIfPackage(editor.document);
+				}
+			} finally {
+				isReanalyzing = false;
+			}
+		},
+	);
+	context.subscriptions.push(configListener);
 }
 
 /**

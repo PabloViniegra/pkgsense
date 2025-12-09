@@ -7,8 +7,11 @@
 		"sourceMap": true,
 		"rootDir": "src",
 		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"exactOptionalPropertyTypes": true,
+		"noPropertyAccessFromIndexSignature": true,
 		"esModuleInterop": true,
 		"skipLibCheck": true
 	},
-	"exclude": ["node_modules", ".vscode-test"]
+	"exclude": ["node_modules", ".vscode-test", "src/test/**/*.ts"]
 }

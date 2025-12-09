@@ -238,7 +238,7 @@ async function fetchLatestVersion(packageName: string): Promise<string | null> {
 
 		const data = (await response.json()) as Record<string, unknown>;
 		const distTags = data['dist-tags'] as Record<string, unknown> | undefined;
-		return (distTags?.latest as string) || null;
+		return (distTags?.['latest'] as string) || null;
 	} catch (error) {
 		console.error(`Failed to fetch latest version for ${packageName}:`, error);
 		return null;

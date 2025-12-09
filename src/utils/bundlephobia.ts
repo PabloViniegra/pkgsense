@@ -22,11 +22,20 @@ function isBundlephobiaResponse(data: unknown): data is BundlephobiaResponse {
 	const obj = data as Record<string, unknown>;
 
 	// Check that size and gzip are numbers if present
-	if ('size' in obj && obj.size !== undefined && typeof obj.size !== 'number') {
+	// Using bracket notation due to TypeScript strict indexing with Record<string, unknown>
+	if (
+		'size' in obj &&
+		obj['size'] !== undefined &&
+		typeof obj['size'] !== 'number'
+	) {
 		return false;
 	}
 
-	if ('gzip' in obj && obj.gzip !== undefined && typeof obj.gzip !== 'number') {
+	if (
+		'gzip' in obj &&
+		obj['gzip'] !== undefined &&
+		typeof obj['gzip'] !== 'number'
+	) {
 		return false;
 	}
 
@@ -113,7 +122,11 @@ export async function fetchBundlephobia(
 	const controller = createAbortController(FETCH_TIMEOUT_MS);
 
 	try {
-		const res = await fetch(url, { signal: controller.signal });
+		// Type cast to any is required due to node-fetch vs DOM AbortSignal incompatibility
+		// The node-fetch library expects a different AbortSignal type than the DOM standard
+		// This is a known limitation and the cast is safe in this context
+		// biome-ignore lint/suspicious/noExplicitAny: Required for node-fetch compatibility
+		const res = await fetch(url, { signal: controller.signal as any });
 
 		if (!res.ok) {
 			return failure(

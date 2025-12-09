@@ -1,5 +1,5 @@
 import { CONSTANTS } from '../shared/constants';
-import { type Result, success } from '../shared/result';
+import { type InfallibleResult, infallible } from '../shared/result';
 import { FINDING_TAGS, type Finding } from '../types';
 import { satisfiesRange } from '../utils/semverHelper';
 import type { Analyzer, AnalysisContext } from './types';
@@ -107,10 +107,11 @@ function checkPeerDependencies(
 
 /**
  * Validates engines and peer dependencies.
+ * This analyzer never fails - it always returns findings (even if empty).
  */
 async function analyze(
 	context: AnalysisContext,
-): Promise<Result<Finding[], never>> {
+): Promise<InfallibleResult<Finding[]>> {
 	const findings: Finding[] = [];
 	const pkg = context.packageJson;
 
@@ -129,7 +130,7 @@ async function analyze(
 		findings.push(...checkPeerDependencies(pkg.peerDependencies));
 	}
 
-	return success(findings);
+	return infallible(findings);
 }
 
 /**
