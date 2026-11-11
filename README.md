@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/logo.webp" alt="pkgsense logo" width="128" height="128">
+</p>
+
 # pkgsense - Package Intelligence for VS Code
 
 **pkgsense** provides intelligent insights into your `package.json` file with real-time diagnostics, automated fixes, and visual enhancements to help you maintain a robust and efficient Node.js project.
