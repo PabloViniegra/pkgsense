@@ -1,531 +1,190 @@
 import * as assert from 'node:assert';
 import { suite, test } from 'mocha';
-import { createEngineAnalyzer } from '../../analyzers/engineAnalyzer';
-import { FINDING_TAGS } from '../../types';
+import {
+	type EngineTool,
+	createEngineAnalyzer,
+} from '../../analyzers/engineAnalyzer';
 import type { AnalysisContext } from '../../analyzers/types';
-import type { PackageJson } from '../../types';
+import { failure, success } from '../../shared/result';
+import { FINDING_TAGS, type Finding, type PackageJson } from '../../types';
 
 suite('EngineAnalyzer Test Suite', () => {
 	const createContext = (packageJson: PackageJson): AnalysisContext => ({
 		packageJson,
 		allDependencies: {},
-		dependencyRanges: {},
-		workspacePath: '/test',
+		workspacePath: '/projects/app',
 	});
 
-	suite('Node.js Version Validation', () => {
-		test('should validate Node.js version requirement', async () => {
-			const analyzer = createEngineAnalyzer();
-			const currentNodeVersion = process.version.replace(/^v/, '');
-			const [major] = currentNodeVersion.split('.');
-
-			const context = createContext({
-				engines: {
-					node: `>=${major}.0.0`,
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const nodeFindings = result.data.filter((f) =>
-					f.message.includes('Node.js'),
-				);
-				assert.strictEqual(nodeFindings.length, 0);
-			}
+	/**
+	 * Runs the analyzer with fake tool versions. Tools missing from
+	 * `versions` cannot be run, like a machine without them on PATH.
+	 */
+	const analyze = async (
+		packageJson: PackageJson,
+		versions: Partial<Record<EngineTool, string>>,
+		calls: [tool: EngineTool, cwd: string][] = [],
+	): Promise<Finding[]> => {
+		const analyzer = createEngineAnalyzer({
+			getToolVersion: async (tool, cwd) => {
+				calls.push([tool, cwd]);
+				const version = versions[tool];
+				return version ? success(version) : failure(`${tool} not found`);
+			},
 		});
 
-		test('should flag Node.js version mismatch', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				engines: {
-					node: '>=99.0.0',
-				},
+		const result = await analyzer.analyze(createContext(packageJson));
+
+		assert.ok(result.success, 'analysis should succeed');
+		return result.data;
+	};
+
+	suite('Node.js version', () => {
+		test('reports a mismatch against the node found on PATH as a warning', async () => {
+			const findings = await analyze(
+				{ engines: { node: '>=22.0.0' } },
+				{ node: 'v20.11.1\n' },
+			);
+
+			assert.strictEqual(findings.length, 1);
+			assert.strictEqual(findings[0].type, 'warning');
+			assert.strictEqual(
+				findings[0].message,
+				'Node.js version mismatch: engines.node requires >=22.0.0, but the node on PATH is v20.11.1.',
+			);
+			assert.deepStrictEqual(findings[0].meta, {
+				required: '>=22.0.0',
+				current: '20.11.1',
+				engine: 'node',
 			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const nodeFindings = result.data.filter((f) =>
-					f.message.includes('Node.js version mismatch'),
-				);
-				assert.strictEqual(nodeFindings.length, 1);
-				assert.strictEqual(nodeFindings[0].type, 'error');
-				assert.ok(nodeFindings[0].tags?.includes(FINDING_TAGS.ENGINES));
-				assert.ok(nodeFindings[0].tags?.includes(FINDING_TAGS.CONFIG));
-			}
+			assert.deepStrictEqual(findings[0].location, ['engines', 'node']);
+			assert.ok(findings[0].tags?.includes(FINDING_TAGS.ENGINES));
 		});
 
-		test('should handle caret range for Node.js version', async () => {
-			const analyzer = createEngineAnalyzer();
-			const currentNodeVersion = process.version.replace(/^v/, '');
-			const [major] = currentNodeVersion.split('.');
+		test('reports nothing when the node on PATH satisfies the range', async () => {
+			const findings = await analyze(
+				{ engines: { node: '^20.9.0 || >=22' } },
+				{ node: 'v20.11.1' },
+			);
 
-			const context = createContext({
-				engines: {
-					node: `^${major}.0.0`,
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
+			assert.deepStrictEqual(findings, []);
 		});
 
-		test('should handle tilde range for Node.js version', async () => {
-			const analyzer = createEngineAnalyzer();
-			const currentNodeVersion = process.version.replace(/^v/, '');
+		test('judges the project node, not the runtime executing the extension', async () => {
+			const hostMajor = Number(process.versions.node.split('.')[0]);
+			const projectNode = `${hostMajor + 2}.0.0`;
 
-			const context = createContext({
-				engines: {
-					node: `~${currentNodeVersion}`,
-				},
-			});
+			const satisfiedByProject = await analyze(
+				{ engines: { node: `>=${hostMajor + 1}` } },
+				{ node: `v${projectNode}` },
+			);
+			const satisfiedOnlyByHost = await analyze(
+				{ engines: { node: `<=${hostMajor}.x` } },
+				{ node: `v${projectNode}` },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
+			assert.deepStrictEqual(satisfiedByProject, []);
+			assert.strictEqual(satisfiedOnlyByHost.length, 1);
+			assert.ok(satisfiedOnlyByHost[0].message.includes(`v${projectNode}`));
 		});
 
-		test('should handle exact Node.js version requirement', async () => {
-			const analyzer = createEngineAnalyzer();
-			const currentNodeVersion = process.version.replace(/^v/, '');
+		test('asks for the version in the package directory', async () => {
+			const calls: [EngineTool, string][] = [];
 
-			const context = createContext({
-				engines: {
-					node: currentNodeVersion,
-				},
-			});
+			await analyze({ engines: { node: '>=18' } }, { node: 'v20.0.0' }, calls);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should include metadata in Node.js version mismatch', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				engines: {
-					node: '>=99.0.0',
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const finding = result.data.find((f) =>
-					f.message.includes('Node.js version mismatch'),
-				);
-				if (finding) {
-					assert.ok(finding.meta);
-					const meta = finding.meta as Record<string, unknown>;
-					assert.strictEqual(meta.required, '>=99.0.0');
-					assert.strictEqual(meta.engine, 'node');
-					assert.ok(meta.current);
-				}
-			}
+			assert.deepStrictEqual(calls, [['node', '/projects/app']]);
 		});
 	});
 
-	suite('npm Version Validation', () => {
-		test('should flag npm version requirement', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				engines: {
-					npm: '>=8.0.0',
-				},
-			});
+	suite('npm version', () => {
+		test('reports a mismatch against the npm found on PATH', async () => {
+			const findings = await analyze(
+				{ engines: { npm: '>=10' } },
+				{ npm: '9.8.1\n' },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const npmFindings = result.data.filter((f) =>
-					f.message.includes('npm version'),
-				);
-				assert.strictEqual(npmFindings.length, 1);
-				assert.strictEqual(npmFindings[0].type, 'info');
-			}
+			assert.strictEqual(findings.length, 1);
+			assert.strictEqual(findings[0].type, 'warning');
+			assert.strictEqual(
+				findings[0].message,
+				'npm version mismatch: engines.npm requires >=10, but the npm on PATH is v9.8.1.',
+			);
 		});
 
-		test('should include npm version in metadata', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				engines: {
-					npm: '>=7.0.0',
-				},
-			});
+		test('reports nothing when npm satisfies the range', async () => {
+			const findings = await analyze(
+				{ engines: { npm: '>=10' } },
+				{ npm: '11.2.0' },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const finding = result.data.find((f) =>
-					f.message.includes('npm version'),
-				);
-				if (finding) {
-					assert.ok(finding.meta);
-					const meta = finding.meta as Record<string, unknown>;
-					assert.strictEqual(meta.required, '>=7.0.0');
-					assert.strictEqual(meta.engine, 'npm');
-				}
-			}
+			assert.deepStrictEqual(findings, []);
 		});
 
-		test('should handle exact npm version', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				engines: {
-					npm: '9.5.0',
-				},
-			});
+		test('reports each mismatching engine separately', async () => {
+			const findings = await analyze(
+				{ engines: { node: '>=22', npm: '>=10' } },
+				{ node: 'v18.20.0', npm: '9.8.1' },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const npmFindings = result.data.filter((f) =>
-					f.message.includes('npm version'),
-				);
-				assert.strictEqual(npmFindings.length, 1);
-			}
+			assert.deepStrictEqual(
+				findings.map((f) => f.meta?.['engine']),
+				['node', 'npm'],
+			);
 		});
 	});
 
-	suite('Peer Dependencies Validation', () => {
-		test('should flag peer dependencies', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				peerDependencies: {
-					react: '^18.0.0',
-				},
-			});
+	suite('Cases where no mismatch can be proven', () => {
+		test('reports nothing when the tool cannot be run', async () => {
+			const findings = await analyze(
+				{ engines: { node: '>=99', npm: '>=99' } },
+				{},
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const peerFindings = result.data.filter((f) =>
-					f.message.includes('peer'),
-				);
-				assert.strictEqual(peerFindings.length, 1);
-				assert.strictEqual(peerFindings[0].type, 'info');
-				assert.ok(peerFindings[0].tags?.includes(FINDING_TAGS.ENGINES));
-				assert.ok(peerFindings[0].tags?.includes(FINDING_TAGS.DEPENDENCIES));
-			}
+			assert.deepStrictEqual(findings, []);
 		});
 
-		test('should handle multiple peer dependencies', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				peerDependencies: {
-					react: '^18.0.0',
-					'react-dom': '^18.0.0',
-					typescript: '^5.0.0',
-				},
-			});
+		test('reports nothing when the tool prints something that is not a version', async () => {
+			const findings = await analyze(
+				{ engines: { node: '>=99' } },
+				{ node: 'command not found' },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const peerFindings = result.data.filter((f) =>
-					f.message.includes('peer'),
-				);
-				assert.strictEqual(peerFindings.length, 1);
-				assert.ok(peerFindings[0].message.includes('3 peer dependencies'));
-			}
+			assert.deepStrictEqual(findings, []);
 		});
 
-		test('should handle single peer dependency', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				peerDependencies: {
-					vue: '^3.0.0',
-				},
-			});
+		test('ignores an engines range that is not valid semver without running the tool', async () => {
+			const calls: [EngineTool, string][] = [];
 
-			const result = await analyzer.analyze(context);
+			const findings = await analyze(
+				{ engines: { node: 'lts/iron' } },
+				{ node: 'v20.0.0' },
+				calls,
+			);
 
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const peerFindings = result.data.filter((f) =>
-					f.message.includes('peer'),
-				);
-				assert.strictEqual(peerFindings.length, 1);
-				assert.ok(peerFindings[0].message.includes('1 peer dependency'));
-				assert.ok(peerFindings[0].message.includes('it is'));
-			}
+			assert.deepStrictEqual(findings, []);
+			assert.deepStrictEqual(calls, []);
 		});
 
-		test('should include peer dependencies in metadata', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				peerDependencies: {
-					react: '^18.0.0',
-					typescript: '^5.0.0',
-				},
-			});
+		test('reports nothing and runs nothing without an engines field', async () => {
+			const calls: [EngineTool, string][] = [];
 
-			const result = await analyzer.analyze(context);
+			const findings = await analyze(
+				{ name: 'app' },
+				{ node: 'v1.0.0' },
+				calls,
+			);
 
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const finding = result.data.find((f) => f.message.includes('peer'));
-				if (finding) {
-					assert.ok(finding.meta);
-					const meta = finding.meta as Record<string, unknown>;
-					assert.ok(meta.peerDependencies);
-				}
-			}
+			assert.deepStrictEqual(findings, []);
+			assert.deepStrictEqual(calls, []);
 		});
 
-		test('should not flag when no peer dependencies', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({});
+		test('does not report peerDependencies, which are requirements for consumers', async () => {
+			const findings = await analyze(
+				{ peerDependencies: { react: '^18.0.0' } },
+				{ node: 'v20.0.0' },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const peerFindings = result.data.filter((f) =>
-					f.message.includes('peer'),
-				);
-				assert.strictEqual(peerFindings.length, 0);
-			}
-		});
-
-		test('should handle empty peer dependencies object', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				peerDependencies: {},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const peerFindings = result.data.filter((f) =>
-					f.message.includes('peer'),
-				);
-				assert.strictEqual(peerFindings.length, 0);
-			}
-		});
-	});
-
-	suite('Combined Engines Validation', () => {
-		test('should validate both Node.js and npm', async () => {
-			const analyzer = createEngineAnalyzer();
-			const currentNodeVersion = process.version.replace(/^v/, '');
-			const [major] = currentNodeVersion.split('.');
-
-			const context = createContext({
-				engines: {
-					node: `>=${major}.0.0`,
-					npm: '>=8.0.0',
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const nodeFindings = result.data.filter((f) =>
-					f.message.includes('Node.js'),
-				);
-				const npmFindings = result.data.filter((f) =>
-					f.message.includes('npm'),
-				);
-				assert.ok(npmFindings.length > 0);
-			}
-		});
-
-		test('should validate engines and peer dependencies together', async () => {
-			const analyzer = createEngineAnalyzer();
-			const currentNodeVersion = process.version.replace(/^v/, '');
-			const [major] = currentNodeVersion.split('.');
-
-			const context = createContext({
-				engines: {
-					node: `>=${major}.0.0`,
-				},
-				peerDependencies: {
-					react: '^18.0.0',
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-	});
-
-	suite('Edge Cases', () => {
-		test('should handle missing engines field', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				assert.strictEqual(result.data.length, 0);
-			}
-		});
-
-		test('should handle empty engines object', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				engines: {},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				assert.strictEqual(result.data.length, 0);
-			}
-		});
-
-		test('should handle complete package with all fields', async () => {
-			const analyzer = createEngineAnalyzer();
-			const currentNodeVersion = process.version.replace(/^v/, '');
-			const [major] = currentNodeVersion.split('.');
-
-			const context = createContext({
-				engines: {
-					node: `>=${major}.0.0`,
-					npm: '>=8.0.0',
-				},
-				peerDependencies: {
-					react: '^18.0.0',
-					typescript: '^5.0.0',
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should handle invalid version ranges gracefully', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				engines: {
-					node: 'invalid-version',
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-	});
-
-	suite('Version Range Formats', () => {
-		test('should handle >= operator', async () => {
-			const analyzer = createEngineAnalyzer();
-			const currentNodeVersion = process.version.replace(/^v/, '');
-
-			const context = createContext({
-				engines: {
-					node: `>=${currentNodeVersion}`,
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should handle > operator', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				engines: {
-					node: '>14.0.0',
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should handle complex range', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				engines: {
-					node: '>=16.0.0 <20.0.0',
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-	});
-
-	suite('Error Message Content', () => {
-		test('should include required and current versions in error', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				engines: {
-					node: '>=99.0.0',
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const finding = result.data.find((f) =>
-					f.message.includes('Node.js version mismatch'),
-				);
-				if (finding) {
-					assert.ok(finding.message.includes('>=99.0.0'));
-					assert.ok(finding.message.includes('found'));
-				}
-			}
-		});
-
-		test('should provide helpful message for npm check', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				engines: {
-					npm: '>=9.0.0',
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const finding = result.data[0];
-				assert.ok(finding.message.includes('verify'));
-				assert.ok(finding.message.includes('npm --version'));
-			}
-		});
-
-		test('should list all peer dependencies', async () => {
-			const analyzer = createEngineAnalyzer();
-			const context = createContext({
-				peerDependencies: {
-					react: '^18.0.0',
-					'react-dom': '^18.0.0',
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const finding = result.data[0];
-				assert.ok(finding.message.includes('react'));
-				assert.ok(finding.message.includes('react-dom'));
-			}
+			assert.deepStrictEqual(findings, []);
 		});
 	});
 });

@@ -24,8 +24,6 @@ export interface AnalysisContext {
 	readonly packageJson: PackageJson;
 	/** Combined dependencies from both dependencies and devDependencies */
 	readonly allDependencies: Readonly<Record<string, string>>;
-	/** Line ranges for each dependency (for diagnostic positioning) */
-	readonly dependencyRanges: Readonly<Record<string, LineRange>>;
 	/** The workspace root path for file system operations */
 	readonly workspacePath: string;
 }

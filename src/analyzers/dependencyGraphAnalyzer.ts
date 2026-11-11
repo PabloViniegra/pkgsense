@@ -184,8 +184,3 @@ export function createDependencyGraphAnalyzer(): Analyzer {
 		analyze,
 	};
 }
-
-/**
- * Default DependencyGraphAnalyzer instance.
- */
-export const dependencyGraphAnalyzer = createDependencyGraphAnalyzer();

@@ -222,9 +222,9 @@ function checkLicense(pkg: AnalysisContext['packageJson']): Finding[] {
 	if (pkg.license === 'UNLICENSED') {
 		return [
 			{
-				type: 'warning',
+				type: 'info',
 				message:
-					'Package is unlicensed. Consider using a standard open-source license.',
+					'Package is marked UNLICENSED: nobody is granted the right to use it. Use an SPDX license identifier if it is meant to be open source.',
 				tags: [FINDING_TAGS.PACKAGING, FINDING_TAGS.LICENSE],
 			},
 		];
@@ -242,6 +242,12 @@ async function analyze(
 ): Promise<InfallibleResult<Finding[]>> {
 	const findings: Finding[] = [];
 	const pkg = context.packageJson;
+
+	// These fields describe a package on the registry; npm refuses to publish
+	// private packages, so they have nothing to describe
+	if (pkg['private'] === true) {
+		return infallible(findings);
+	}
 
 	// Run all metadata checks
 	findings.push(...checkRepository(pkg));
@@ -266,8 +272,3 @@ export function createMetadataAnalyzer(): Analyzer {
 		analyze,
 	};
 }
-
-/**
- * Default MetadataAnalyzer instance.
- */
-export const metadataAnalyzer = createMetadataAnalyzer();

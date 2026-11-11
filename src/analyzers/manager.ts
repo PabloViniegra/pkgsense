@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { AnalyzerType } from '../config/analyzerConfig';
 import { getEnabledAnalyzers } from '../config/analyzerConfig';
@@ -5,31 +6,22 @@ import type { DiagnosticsManager } from '../decorators/diagnostics';
 import { NotificationManager } from '../decorators/notifications';
 import { CONSTANTS } from '../shared/constants';
 import { type Result, failure, success } from '../shared/result';
-import { type Finding, isPackageJson } from '../types';
+import { type Finding, type PackageJson, isPackageJson } from '../types';
+import { createDependencyGraphAnalyzer } from './dependencyGraphAnalyzer';
 import {
-	createDependencyGraphAnalyzer,
-	dependencyGraphAnalyzer,
-} from './dependencyGraphAnalyzer';
-import { createEngineAnalyzer, engineAnalyzer } from './engineAnalyzer';
-import {
-	createHeuristicsAnalyzer,
-	heuristicsAnalyzer,
-} from './heuristicsAnalyzer';
-import { createLicenseAnalyzer, licenseAnalyzer } from './licenseAnalyzer';
-import { createMetadataAnalyzer, metadataAnalyzer } from './metadataAnalyzer';
-import { createScriptAnalyzer, scriptAnalyzer } from './scriptAnalyzer';
-import type {
-	Analyzer,
-	AnalysisContext,
-	AnalysisManagerError,
-	LineRange,
-} from './types';
-import { createUpdateAnalyzer, updateAnalyzer } from './updateAnalyzer';
-import {
-	createVulnerabilityAnalyzer,
-	vulnerabilityAnalyzer,
-} from './vulnerabilityAnalyzer';
-import { createWeightAnalyzer, weightAnalyzer } from './weightAnalyzer';
+	type DocumentLocator,
+	type KeySpan,
+	createDocumentLocator,
+} from './documentLocations';
+import { createEngineAnalyzer } from './engineAnalyzer';
+import { createHeuristicsAnalyzer } from './heuristicsAnalyzer';
+import { createLicenseAnalyzer } from './licenseAnalyzer';
+import { createMetadataAnalyzer } from './metadataAnalyzer';
+import { createScriptAnalyzer } from './scriptAnalyzer';
+import type { Analyzer, AnalysisContext, AnalysisManagerError } from './types';
+import { createUpdateAnalyzer } from './updateAnalyzer';
+import { createVulnerabilityAnalyzer } from './vulnerabilityAnalyzer';
+import { createWeightAnalyzer } from './weightAnalyzer';
 
 /**
  * Configuration for the AnalysisManager.
@@ -59,23 +51,30 @@ const ANALYZER_FACTORIES: Record<AnalyzerType, () => Analyzer> = {
 	dependencyGraph: createDependencyGraphAnalyzer,
 };
 
+// On Windows a repository can ship its own node.cmd or npm.cmd, which would
+// run as soon as the package.json is opened
+const REQUIRES_TRUST: ReadonlySet<AnalyzerType> = new Set([
+	'vulnerability',
+	'engine',
+]);
+
+/**
+ * Analyzers that spawn processes inside the workspace only run once the
+ * workspace is trusted.
+ */
+export function selectAnalyzerTypes(
+	enabled: readonly AnalyzerType[],
+	isTrusted: boolean,
+): AnalyzerType[] {
+	return enabled.filter((type) => isTrusted || !REQUIRES_TRUST.has(type));
+}
+
 /**
  * Default analyzers configuration.
- * Following Open/Closed Principle - new analyzers can be added
- * without modifying the manager.
- *
- * Respects user configuration to enable/disable analyzers.
+ * Respects user configuration and workspace trust.
  */
 function createDefaultAnalyzers(): Analyzer[] {
-	const enabledAnalyzers = getEnabledAnalyzers();
-
-	// If no analyzers are enabled, return empty array
-	if (enabledAnalyzers.length === 0) {
-		return [];
-	}
-
-	// Create only the enabled analyzers, with validation
-	return enabledAnalyzers
+	return selectAnalyzerTypes(getEnabledAnalyzers(), vscode.workspace.isTrusted)
 		.filter((type) => {
 			if (!(type in ANALYZER_FACTORIES)) {
 				console.error(`Unknown analyzer type: ${type}`);
@@ -86,100 +85,62 @@ function createDefaultAnalyzers(): Analyzer[] {
 		.map((type) => ANALYZER_FACTORIES[type]());
 }
 
-/**
- * Creates a vscode.Range from a LineRange.
- * Bridges the platform-agnostic LineRange to VS Code specific Range.
- */
-function toVscodeRange(lineRange: LineRange): vscode.Range {
+function toVscodeRange(
+	document: vscode.TextDocument,
+	span: KeySpan,
+): vscode.Range {
 	return new vscode.Range(
-		lineRange.startLine,
-		lineRange.startCharacter,
-		lineRange.endLine,
-		lineRange.endCharacter,
+		document.positionAt(span.offset),
+		document.positionAt(span.offset + span.length),
 	);
 }
 
-/**
- * Creates a LineRange from document position data.
- * Pure function - no side effects.
- */
-function createLineRange(
-	lineIndex: number,
-	columnIndex: number,
-	depName: string,
-): LineRange {
-	return {
-		startLine: lineIndex,
-		startCharacter: columnIndex + 1,
-		endLine: lineIndex,
-		endCharacter: columnIndex + 1 + depName.length,
-	};
-}
-
-/**
- * Finds the column index of a dependency name in a line.
- * Pure function - no side effects.
- */
-function findDependencyInLine(
-	line: string,
-	depName: string,
-): number | undefined {
-	const index = line.indexOf(`"${depName}"`);
-	return index !== -1 ? index : undefined;
-}
-
-/**
- * Computes line ranges for all dependencies in a document.
- * Extracts position information for diagnostic highlighting.
- */
-function computeDependencyRanges(
-	document: vscode.TextDocument,
-	deps: readonly string[],
-): Record<string, LineRange> {
-	const ranges: Record<string, LineRange> = {};
-
-	for (let i = 0; i < document.lineCount; i++) {
-		const line = document.lineAt(i).text;
-
-		for (const depName of deps) {
-			const columnIndex = findDependencyInLine(line, depName);
-
-			if (columnIndex !== undefined) {
-				ranges[depName] = createLineRange(i, columnIndex, depName);
-			}
-		}
+function findSpan(finding: Finding, locator: DocumentLocator): KeySpan | null {
+	const atLocation = finding.location
+		? locator.findKey(finding.location)
+		: null;
+	if (atLocation) {
+		return atLocation;
 	}
 
-	return ranges;
+	return finding.dependency ? locator.findDependency(finding.dependency) : null;
 }
 
 /**
- * Converts findings with LineRange to findings with vscode.Range.
- * Bridges platform-agnostic findings to VS Code specific format.
+ * Places each finding on the key it refers to in the current text.
+ * Findings with no key to point at stay at the top of the file.
  */
-function convertFindingsToVscode(
-	findings: Finding[],
-	dependencyRanges: Record<string, LineRange>,
+function locateFindings(
+	findings: readonly Finding[],
+	document: vscode.TextDocument,
 ): Finding[] {
+	const locator = createDocumentLocator(document.getText());
+
 	return findings.map((finding) => {
-		// If finding already has a range (vscode.Range), keep it
 		if (finding.range) {
 			return finding;
 		}
 
-		// If finding has a dependency, try to get its range
-		if (finding.dependency) {
-			const depRange = dependencyRanges[finding.dependency];
-			if (depRange) {
-				return {
-					...finding,
-					range: toVscodeRange(depRange),
-				};
-			}
-		}
-
-		return finding;
+		const span = findSpan(finding, locator);
+		return span
+			? { ...finding, range: toVscodeRange(document, span) }
+			: finding;
 	});
+}
+
+function createContext(
+	json: PackageJson,
+	document: vscode.TextDocument,
+): AnalysisContext {
+	// The "dependencies" entry wins when a package is listed in both: it is
+	// the one installed for production
+	return {
+		packageJson: json,
+		allDependencies: { ...json.devDependencies, ...json.dependencies },
+		// The package's own directory: in a monorepo the first workspace
+		// folder is a different project
+		workspacePath: path.dirname(document.uri.fsPath),
+	};
 }
 
 /**
@@ -231,22 +192,25 @@ export class AnalysisManager {
 			return failure(error);
 		}
 
-		const allDependencies = { ...json.dependencies, ...json.devDependencies };
-		const dependencyRanges = computeDependencyRanges(
-			document,
-			Object.keys(allDependencies),
+		const findings = await this.runAnalyzersWithProgress(
+			createContext(json, document),
 		);
 
-		const context: AnalysisContext = {
-			packageJson: json,
-			allDependencies,
-			dependencyRanges,
-			workspacePath:
-				vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd(),
-		};
+		const vscodeFindings = locateFindings(findings, document);
 
+		diagnostics.setFindings(document.uri, vscodeFindings);
+
+		// Show notifications for critical vulnerabilities
+		this.notificationManager.notifyFindings(vscodeFindings);
+
+		return success(undefined);
+	}
+
+	private runAnalyzersWithProgress(
+		context: AnalysisContext,
+	): Thenable<Finding[]> {
 		// Show progress indicator for analysis
-		const findings = await vscode.window.withProgress(
+		return vscode.window.withProgress(
 			{
 				location: vscode.ProgressLocation.Window,
 				title: 'Analyzing package.json',
@@ -259,16 +223,6 @@ export class AnalysisManager {
 				return results;
 			},
 		);
-
-		// Convert LineRange to vscode.Range for diagnostics
-		const vscodeFindings = convertFindingsToVscode(findings, dependencyRanges);
-
-		diagnostics.setFindings(document.uri, vscodeFindings);
-
-		// Show notifications for critical vulnerabilities
-		this.notificationManager.notifyFindings(vscodeFindings);
-
-		return success(undefined);
 	}
 
 	/**

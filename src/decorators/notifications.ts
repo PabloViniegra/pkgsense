@@ -64,7 +64,7 @@ export class NotificationManager {
 
 		vscode.window
 			.showErrorMessage(
-				`Critical Vulnerability: ${packageName}`,
+				`Security vulnerability in ${packageName}`,
 				'View Details',
 				'Dismiss',
 			)

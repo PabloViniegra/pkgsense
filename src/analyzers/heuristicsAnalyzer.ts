@@ -3,52 +3,36 @@ import { FINDING_TAGS, type Finding, type PackageJson } from '../types';
 import type { Analyzer, AnalysisContext } from './types';
 
 /**
- * Configuration for deprecated package detection.
- * Extracted to enable easy extension and configuration.
+ * Packages that are not deprecated on npm but whose maintainers recommend
+ * alternatives for new projects. Actual npm deprecations are reported by the
+ * update analyzer straight from the registry notice.
  */
-interface DeprecatedPackageRule {
-	readonly pkg: string;
-	readonly suggestion: string;
-}
-
-const DEPRECATED_PACKAGES = [
+const MAINTENANCE_MODE_PACKAGES = [
 	{
 		pkg: 'moment',
 		suggestion:
-			'Consider using dayjs or luxon (moment is in maintenance mode).',
+			'moment is in maintenance mode (no new features). Consider dayjs or luxon.',
+		url: 'https://momentjs.com/docs/#/-project-status/',
 	},
-	{
-		pkg: 'request',
-		suggestion: 'request is deprecated; use fetch or axios instead.',
-	},
-	{
-		pkg: 'left-pad',
-		suggestion: 'Unnecessary package.',
-	},
-] as const satisfies readonly DeprecatedPackageRule[];
+] as const;
 
 /**
- * Union type of all deprecated package names.
- * Automatically derived from the DEPRECATED_PACKAGES array.
- */
-type DeprecatedPackageName = (typeof DEPRECATED_PACKAGES)[number]['pkg'];
-
-/**
- * Check for deprecated or problematic packages.
+ * Check for packages in maintenance mode.
  * Pure function - no side effects.
  */
-function checkDeprecatedPackages(
+function checkMaintenanceModePackages(
 	allDeps: Readonly<Record<string, string>>,
 ): Finding[] {
 	const findings: Finding[] = [];
 
-	for (const rule of DEPRECATED_PACKAGES) {
+	for (const rule of MAINTENANCE_MODE_PACKAGES) {
 		if (allDeps[rule.pkg]) {
 			findings.push({
-				type: 'warning',
-				message: `Deprecated dependency detected: ${rule.pkg}. ${rule.suggestion}`,
+				type: 'info',
+				message: `Maintenance-mode dependency: ${rule.suggestion}`,
 				dependency: rule.pkg,
-				tags: [FINDING_TAGS.MAINTENANCE, FINDING_TAGS.REPLACEMENT],
+				tags: [FINDING_TAGS.MAINTENANCE],
+				meta: { url: rule.url },
 			});
 		}
 	}
@@ -70,6 +54,8 @@ function checkDuplicateDependencies(json: PackageJson): Finding[] {
 					type: 'warning',
 					message: `Duplicate dependency in dependencies and devDependencies: ${dep}.`,
 					dependency: dep,
+					// The quick fix removes the devDependencies copy, so point there
+					location: ['devDependencies', dep],
 					tags: [FINDING_TAGS.DUPLICATION],
 				});
 			}
@@ -106,7 +92,8 @@ function checkTestScript(json: PackageJson): Finding[] {
  * Pure function - no side effects.
  */
 function checkFilesField(json: PackageJson): Finding[] {
-	if (!json.files) {
+	// "files" only affects what gets published; private packages are never published
+	if (!json.files && json['private'] !== true) {
 		return [
 			{
 				type: 'info',
@@ -154,7 +141,7 @@ export function createHeuristicsAnalyzer(): Analyzer {
 			const { packageJson, allDependencies } = context;
 
 			const findings: Finding[] = [
-				...checkDeprecatedPackages(allDependencies),
+				...checkMaintenanceModePackages(allDependencies),
 				...checkDuplicateDependencies(packageJson),
 				...checkTestScript(packageJson),
 				...checkFilesField(packageJson),
@@ -164,24 +151,4 @@ export function createHeuristicsAnalyzer(): Analyzer {
 			return success(findings);
 		},
 	};
-}
-
-/**
- * @deprecated Use createHeuristicsAnalyzer() factory instead.
- * Kept for backward compatibility during migration.
- */
-export async function heuristicsAnalyzer(
-	json: PackageJson,
-	allDeps: Readonly<Record<string, string>>,
-): Promise<readonly Finding[]> {
-	const analyzer = createHeuristicsAnalyzer();
-	const context: AnalysisContext = {
-		packageJson: json,
-		allDependencies: allDeps,
-		dependencyRanges: {},
-		workspacePath: '',
-	};
-
-	const result = await analyzer.analyze(context);
-	return result.success ? result.data : [];
 }

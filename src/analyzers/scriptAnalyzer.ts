@@ -35,22 +35,22 @@ interface DangerPattern {
  */
 const DANGER_PATTERNS: readonly DangerPattern[] = [
 	{
-		pattern: /rm\s+-rf/,
+		pattern: /\brm\s+-rf\b/,
 		message:
-			'Dangerous: "rm -rf" command detected. This can delete files permanently.',
-		severity: 'error',
+			'"rm -rf" is not available in Windows cmd or PowerShell. Consider a cross-platform alternative such as rimraf.',
+		severity: 'info',
 	},
 	{
-		pattern: /sudo\s+/,
+		pattern: /\bsudo\s+/,
 		message:
 			'Requires elevated privileges (sudo). Package scripts should not require root access.',
-		severity: 'error',
+		severity: 'warning',
 	},
 	{
-		pattern: /eval\s*\(/,
+		pattern: /\beval\s*\(/,
 		message:
 			'eval() detected. This is a potential security risk if used with user input.',
-		severity: 'warning',
+		severity: 'info',
 	},
 	{
 		pattern: />\s*\/dev\/null\s+2>&1/,
@@ -59,16 +59,14 @@ const DANGER_PATTERNS: readonly DangerPattern[] = [
 		severity: 'info',
 	},
 	{
-		pattern: /curl\s+.*\|\s*sh/,
-		message:
-			'Piping curl to shell detected. This is a security risk - always inspect downloaded scripts.',
-		severity: 'error',
+		pattern: /\bcurl\b[^|]*\|\s*(sudo\s+)?(ba|z)?sh\b/,
+		message: 'Piping curl to a shell runs downloaded code without inspection.',
+		severity: 'warning',
 	},
 	{
-		pattern: /wget\s+.*\|\s*sh/,
-		message:
-			'Piping wget to shell detected. This is a security risk - always inspect downloaded scripts.',
-		severity: 'error',
+		pattern: /\bwget\b[^|]*\|\s*(sudo\s+)?(ba|z)?sh\b/,
+		message: 'Piping wget to a shell runs downloaded code without inspection.',
+		severity: 'warning',
 	},
 ];
 
@@ -161,12 +159,9 @@ function checkTestScript(scripts: Record<string, string>): Finding[] {
 
 	// Check for placeholder test scripts
 	const testScript = scripts['test'].toLowerCase();
-	const placeholders = [
-		'echo "error: no test specified"',
-		'echo error: no test specified',
-		'exit 1',
-		'no test',
-	];
+	// The script "npm init" generates; a bare "exit 1" is not enough to tell,
+	// since real scripts use it too ("mocha || exit 1")
+	const placeholders = ['no test specified'];
 
 	for (const placeholder of placeholders) {
 		if (testScript.includes(placeholder)) {
@@ -220,8 +215,3 @@ export function createScriptAnalyzer(): Analyzer {
 		analyze,
 	};
 }
-
-/**
- * Default ScriptAnalyzer instance.
- */
-export const scriptAnalyzer = createScriptAnalyzer();

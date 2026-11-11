@@ -14,6 +14,9 @@ async function main() {
 		platform: 'node',
 		outfile: 'out/extension.js',
 		external: ['vscode'],
+		// jsonc-parser's default UMD build loads its modules through a require
+		// esbuild cannot follow; its ESM build bundles correctly
+		mainFields: ['module', 'main'],
 		logLevel: 'silent',
 		plugins: [
 			{

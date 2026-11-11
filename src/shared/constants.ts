@@ -5,11 +5,12 @@ export const CONSTANTS = {
 	PACKAGE_SIZE_SMALL_THRESHOLD: 50 * 1024, // 50 KB
 
 	// Buffer sizes
-	EXEC_MAX_BUFFER: 1024 * 1024, // 1 MB
+	EXEC_MAX_BUFFER: 64 * 1024 * 1024, // 64 MB - audit reports of large projects exceed 1 MB
 
 	// Timeouts
 	EXEC_TIMEOUT_MS: 30000, // 30 seconds
 	NPM_REGISTRY_TIMEOUT_MS: 5000, // 5 seconds
+	ANALYSIS_DEBOUNCE_MS: 500,
 
 	// Conversions
 	BYTES_TO_KB: 1024,

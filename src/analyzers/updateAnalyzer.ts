@@ -1,13 +1,12 @@
-import { CONSTANTS } from '../shared/constants';
+import * as semver from 'semver';
 import { type Result, failure, success } from '../shared/result';
 import { FINDING_TAGS, type Finding } from '../types';
-import { fetchLatestVersion as defaultFetchLatestVersion } from '../utils/npmRegistry';
 import {
-	getUpdateType,
-	isPreRelease,
-	sanitizeVersion,
-	type UpdateType,
-} from '../utils/semverHelper';
+	type DeprecationNotice,
+	fetchDeprecation as defaultFetchDeprecation,
+	fetchLatestVersion as defaultFetchLatestVersion,
+} from '../utils/npmRegistry';
+import { type UpdateType, getUpdateType } from '../utils/semverHelper';
 import type { Analyzer, AnalysisContext, AnalyzerError } from './types';
 
 /**
@@ -22,6 +21,14 @@ export interface UpdateAnalyzerDeps {
 	readonly fetchLatestVersion: (
 		packageName: string,
 	) => Promise<Result<string, string>>;
+	/**
+	 * Function to fetch the registry deprecation notice of the version a
+	 * specifier resolves to. Omit to skip deprecation checks.
+	 */
+	readonly fetchDeprecation?: (
+		packageName: string,
+		spec: string,
+	) => Promise<Result<DeprecationNotice | null, string>>;
 }
 
 /**
@@ -29,213 +36,147 @@ export interface UpdateAnalyzerDeps {
  */
 const DEFAULT_DEPS: UpdateAnalyzerDeps = {
 	fetchLatestVersion: defaultFetchLatestVersion,
+	fetchDeprecation: defaultFetchDeprecation,
 };
 
-/**
- * Update Analyzer - Detects outdated dependencies with available updates.
- *
- * Checks for:
- * - Major updates (breaking changes) → WARNING
- * - Minor updates (new features) → INFO
- * - Patch updates (bug fixes) → INFO
- * - Pre-release versions (skipped)
- *
- * Uses NPM registry API to fetch latest versions and compares with
- * currently installed versions using semver.
- *
- * @example
- * ```typescript
- * const analyzer = createUpdateAnalyzer();
- * const result = await analyzer.analyze(context);
- * if (result.success) {
- *   console.log(`Found ${result.data.length} outdated dependencies`);
- * }
- * ```
- */
+interface UpdateDescription {
+	readonly label: string;
+	readonly hint: string;
+	readonly type: Finding['type'];
+}
 
-/**
- * Information about an available update.
- */
-interface UpdateInfo {
-	readonly packageName: string;
-	readonly currentVersion: string;
-	readonly latestVersion: string;
-	readonly updateType: UpdateType;
+const UPDATE_DESCRIPTIONS: Record<UpdateType, UpdateDescription> = {
+	major: {
+		label: 'Major',
+		hint: 'may contain breaking changes',
+		type: 'warning',
+	},
+	minor: { label: 'Minor', hint: 'new features', type: 'info' },
+	patch: { label: 'Patch', hint: 'bug fixes', type: 'info' },
+};
+
+function npmPackageUrl(packageName: string): string {
+	return `https://www.npmjs.com/package/${packageName}`;
 }
 
 /**
- * Creates a function to fetch latest versions for all dependencies.
- * Uses dependency injection for the fetch function.
+ * Reports an update only when the declared range cannot reach the latest
+ * release. A range that already admits it (e.g. ^1.2.0 with latest 1.9.0)
+ * says nothing about what is installed, so there is nothing verifiable to flag.
  */
-function createFetchLatestVersions(
-	fetchVersion: UpdateAnalyzerDeps['fetchLatestVersion'],
-) {
-	return async function fetchLatestVersions(
-		dependencies: Record<string, string>,
-	): Promise<Map<string, string>> {
-		const latestVersions = new Map<string, string>();
+function createUpdateFinding(
+	packageName: string,
+	spec: string,
+	latestVersion: string,
+): Finding | null {
+	if (!semver.valid(latestVersion) || semver.prerelease(latestVersion)) {
+		return null;
+	}
+	if (semver.satisfies(latestVersion, spec)) {
+		return null;
+	}
 
-		const entries = Object.entries(dependencies);
+	const declaredMinimum = semver.minVersion(spec);
+	if (!declaredMinimum) {
+		return null;
+	}
 
-		for (const [packageName, currentVersion] of entries) {
-			const result = await fetchVersion(packageName);
+	const updateType = getUpdateType(declaredMinimum.version, latestVersion);
+	if (!updateType) {
+		return null;
+	}
 
-			if (result.success) {
-				latestVersions.set(packageName, result.data);
-			}
-			// If fetch fails, skip this package (no update info available)
-		}
+	const { label, hint, type } = UPDATE_DESCRIPTIONS[updateType];
 
-		return latestVersions;
+	return {
+		type,
+		message: `${packageName}: ${label} update available ${spec} → ${latestVersion} (${hint})`,
+		dependency: packageName,
+		tags: [FINDING_TAGS.UPDATES],
+		meta: {
+			currentVersion: spec,
+			latestVersion,
+			updateType,
+			url: `${npmPackageUrl(packageName)}/v/${latestVersion}`,
+		},
 	};
 }
 
-/**
- * Compares current versions with latest versions to find updates.
- */
-function findUpdates(
-	dependencies: Record<string, string>,
-	latestVersions: Map<string, string>,
-): UpdateInfo[] {
-	const updates: UpdateInfo[] = [];
-
-	for (const [packageName, currentVersionRaw] of Object.entries(dependencies)) {
-		const latestVersion = latestVersions.get(packageName);
-
-		if (!latestVersion) {
-			// No latest version info available, skip
-			continue;
-		}
-
-		// Skip pre-release versions
-		if (isPreRelease(latestVersion)) {
-			continue;
-		}
-
-		const currentVersion = sanitizeVersion(currentVersionRaw);
-		const updateType = getUpdateType(currentVersion, latestVersion);
-
-		if (updateType) {
-			updates.push({
-				packageName,
-				currentVersion,
-				latestVersion,
-				updateType,
-			});
-		}
-	}
-
-	return updates;
+function createDeprecationFinding(
+	packageName: string,
+	notice: DeprecationNotice,
+): Finding {
+	return {
+		type: 'warning',
+		message: `Deprecated on npm: ${packageName}@${notice.version} - ${notice.message}`,
+		dependency: packageName,
+		tags: [FINDING_TAGS.MAINTENANCE, FINDING_TAGS.REPLACEMENT],
+		meta: {
+			deprecatedVersion: notice.version,
+			url: `${npmPackageUrl(packageName)}/v/${notice.version}`,
+		},
+	};
 }
 
-/**
- * Converts update info to findings.
- * Note: ranges will be converted to vscode.Range by the manager.
- */
-function createFindingsFromUpdates(updates: UpdateInfo[]): Finding[] {
+interface DependencyCheck {
+	readonly findings: Finding[];
+	/** Why the registry could not answer, when it could not */
+	readonly error?: string;
+}
+
+async function analyzeDependency(
+	deps: UpdateAnalyzerDeps,
+	packageName: string,
+	spec: string,
+): Promise<DependencyCheck> {
+	// workspace:, file:, git URLs, aliases and dist-tags are not registry ranges
+	if (!semver.validRange(spec)) {
+		return { findings: [] };
+	}
+
+	const latest = await deps.fetchLatestVersion(packageName);
+	if (!latest.success) {
+		return { findings: [], error: latest.error };
+	}
+
 	const findings: Finding[] = [];
-
-	for (const update of updates) {
-		const { packageName, currentVersion, latestVersion, updateType } = update;
-
-		// Major updates are warnings (potential breaking changes)
-		if (updateType === 'major') {
-			findings.push({
-				type: 'warning',
-				message: `${packageName}: Major update available ${currentVersion} → ${latestVersion} (may contain breaking changes)`,
-				dependency: packageName,
-				tags: [FINDING_TAGS.UPDATES, FINDING_TAGS.MAINTENANCE],
-				meta: {
-					currentVersion,
-					latestVersion,
-					updateType: 'major',
-				},
-			});
-		}
-		// Minor updates are info (new features, backward compatible)
-		else if (updateType === 'minor') {
-			findings.push({
-				type: 'info',
-				message: `${packageName}: Minor update available ${currentVersion} → ${latestVersion} (new features)`,
-				dependency: packageName,
-				tags: [FINDING_TAGS.UPDATES, FINDING_TAGS.MAINTENANCE],
-				meta: {
-					currentVersion,
-					latestVersion,
-					updateType: 'minor',
-				},
-			});
-		}
-		// Patch updates are info (bug fixes)
-		else if (updateType === 'patch') {
-			findings.push({
-				type: 'info',
-				message: `${packageName}: Patch update available ${currentVersion} → ${latestVersion} (bug fixes)`,
-				dependency: packageName,
-				tags: [FINDING_TAGS.UPDATES, FINDING_TAGS.MAINTENANCE],
-				meta: {
-					currentVersion,
-					latestVersion,
-					updateType: 'patch',
-				},
-			});
-		}
+	const update = createUpdateFinding(packageName, spec, latest.data);
+	if (update) {
+		findings.push(update);
 	}
 
-	return findings;
+	const deprecation = deps.fetchDeprecation
+		? await deps.fetchDeprecation(packageName, spec)
+		: null;
+	if (deprecation && !deprecation.success) {
+		return { findings, error: deprecation.error };
+	}
+	if (deprecation?.data) {
+		findings.push(createDeprecationFinding(packageName, deprecation.data));
+	}
+
+	return { findings };
 }
 
-/**
- * Creates an analyze function with injected dependencies.
- */
-function createAnalyze(deps: UpdateAnalyzerDeps) {
-	const fetchLatestVersions = createFetchLatestVersions(
-		deps.fetchLatestVersion,
-	);
+function createLookupFailureFinding(failures: Map<string, string>): Finding {
+	const names = [...failures.keys()];
+	const [firstError] = failures.values();
 
-	return async function analyze(
-		context: AnalysisContext,
-	): Promise<Result<Finding[], AnalyzerError>> {
-		const findings: Finding[] = [];
-
-		// Skip if no dependencies
-		if (
-			!context.allDependencies ||
-			Object.keys(context.allDependencies).length === 0
-		) {
-			return success(findings);
-		}
-
-		try {
-			// Fetch latest versions for all dependencies
-			const latestVersions = await fetchLatestVersions(context.allDependencies);
-
-			// Find updates by comparing versions
-			const updates = findUpdates(context.allDependencies, latestVersions);
-
-			// Convert updates to findings
-			const updateFindings = createFindingsFromUpdates(updates);
-
-			findings.push(...updateFindings);
-
-			return success(findings);
-		} catch (error) {
-			return failure({
-				code: 'UPDATE_ANALYSIS_ERROR',
-				message:
-					error instanceof Error ? error.message : 'Failed to analyze updates',
-			});
-		}
+	return {
+		type: 'info',
+		message: `Could not check ${names.length} ${names.length === 1 ? 'dependency' : 'dependencies'} for updates (${names.join(', ')}): ${firstError}`,
+		location: ['dependencies'],
+		tags: [FINDING_TAGS.UPDATES],
+		meta: { packages: names },
 	};
 }
 
 /**
  * Creates an UpdateAnalyzer instance with optional dependency injection.
  *
- * Factory pattern with dependency injection enables:
- * - Testing with mock version fetch implementations
- * - Swapping API providers without changing analyzer logic
- * - Dependency inversion principle compliance
+ * Reports, per dependency:
+ * - updates the declared range cannot reach (major → warning, minor/patch → info)
+ * - the deprecation notice npm publishes for the resolved version (warning)
  *
  * @param deps - Optional dependencies to inject (defaults to real NPM registry API)
  * @returns Analyzer instance for update detection
@@ -245,11 +186,37 @@ export function createUpdateAnalyzer(
 ): Analyzer {
 	return {
 		name: 'update',
-		analyze: createAnalyze(deps),
+
+		async analyze(
+			context: AnalysisContext,
+		): Promise<Result<Finding[], AnalyzerError>> {
+			const findings: Finding[] = [];
+			const failures = new Map<string, string>();
+
+			try {
+				for (const [name, spec] of Object.entries(context.allDependencies)) {
+					const check = await analyzeDependency(deps, name, spec);
+					findings.push(...check.findings);
+					if (check.error) {
+						console.warn(`Update check failed for ${name}: ${check.error}`);
+						failures.set(name, check.error);
+					}
+				}
+
+				if (failures.size > 0) {
+					findings.push(createLookupFailureFinding(failures));
+				}
+
+				return success(findings);
+			} catch (error) {
+				return failure({
+					code: 'UPDATE_ANALYSIS_ERROR',
+					message:
+						error instanceof Error
+							? error.message
+							: 'Failed to analyze updates',
+				});
+			}
+		},
 	};
 }
-
-/**
- * Default UpdateAnalyzer instance.
- */
-export const updateAnalyzer = createUpdateAnalyzer();

@@ -36,6 +36,8 @@ export interface Finding {
 	readonly message: string;
 	readonly dependency?: string;
 	readonly range?: vscode.Range;
+	/** JSON path of the key the diagnostic belongs on, e.g. ["engines", "node"] */
+	readonly location?: readonly string[];
 	readonly tags?: readonly FindingTag[];
 	readonly meta?: Readonly<Record<string, unknown>>;
 }
@@ -80,6 +82,20 @@ export interface PackageJson {
 	readonly [key: string]: unknown; // Allow other fields
 }
 
+const isString = (value: unknown): boolean => typeof value === 'string';
+
+const PACKAGE_FIELD_VALIDATORS: Readonly<
+	Record<string, (value: unknown) => boolean>
+> = {
+	name: isString,
+	version: isString,
+	dependencies: isStringRecord,
+	devDependencies: isStringRecord,
+	scripts: isStringRecord,
+	files: isStringArray,
+	type: (value) => value === 'module' || value === 'commonjs',
+};
+
 // Type guard with more comprehensive validation
 export function isPackageJson(data: unknown): data is PackageJson {
 	if (typeof data !== 'object' || data === null || Array.isArray(data)) {
@@ -89,63 +105,9 @@ export function isPackageJson(data: unknown): data is PackageJson {
 	const obj = data as Record<string, unknown>;
 
 	// Using bracket notation throughout due to TypeScript strictIndexSignatureKeys
-	// Check optional name field
-	if ('name' in obj && typeof obj['name'] !== 'string' && obj['name'] !== undefined) {
-		return false;
-	}
-
-	// Check optional version field
-	if (
-		'version' in obj &&
-		typeof obj['version'] !== 'string' &&
-		obj['version'] !== undefined
-	) {
-		return false;
-	}
-
-	// Check optional dependencies
-	if (
-		'dependencies' in obj &&
-		obj['dependencies'] !== undefined &&
-		!isStringRecord(obj['dependencies'])
-	) {
-		return false;
-	}
-
-	// Check optional devDependencies
-	if (
-		'devDependencies' in obj &&
-		obj['devDependencies'] !== undefined &&
-		!isStringRecord(obj['devDependencies'])
-	) {
-		return false;
-	}
-
-	// Check optional scripts
-	if (
-		'scripts' in obj &&
-		obj['scripts'] !== undefined &&
-		!isStringRecord(obj['scripts'])
-	) {
-		return false;
-	}
-
-	// Check optional files array
-	if ('files' in obj && obj['files'] !== undefined && !isStringArray(obj['files'])) {
-		return false;
-	}
-
-	// Check optional type field
-	if (
-		'type' in obj &&
-		obj['type'] !== undefined &&
-		obj['type'] !== 'module' &&
-		obj['type'] !== 'commonjs'
-	) {
-		return false;
-	}
-
-	return true;
+	return Object.entries(PACKAGE_FIELD_VALIDATORS).every(
+		([field, isValid]) => obj[field] === undefined || isValid(obj[field]),
+	);
 }
 
 // Helper type guards

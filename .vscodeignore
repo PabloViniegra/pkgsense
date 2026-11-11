@@ -5,7 +5,7 @@ src/**
 .gitignore
 .yarnrc
 vsc-extension-quickstart.md
-**/tsconfig.json
+**/tsconfig*.json
 **/.eslintrc.json
 **/*.map
 **/*.ts
@@ -22,4 +22,6 @@ TEST_SUMMARY.md
 .mcp.json
 eslint.config.mjs
 esbuild.js
-out/test/**
+out/**
+!out/extension.js
+pnpm-workspace.yaml

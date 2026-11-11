@@ -1,415 +1,334 @@
 import * as assert from 'node:assert';
 import { suite, test } from 'mocha';
-import { createUpdateAnalyzer } from '../../analyzers/updateAnalyzer';
-import { FINDING_TAGS } from '../../types';
 import type { AnalysisContext } from '../../analyzers/types';
+import { createUpdateAnalyzer } from '../../analyzers/updateAnalyzer';
+import { failure, success } from '../../shared/result';
+import { FINDING_TAGS, type Finding } from '../../types';
+import type { DeprecationNotice } from '../../utils/npmRegistry';
+
+interface Registry {
+	readonly latest?: Readonly<Record<string, string>>;
+	readonly deprecated?: Readonly<Record<string, DeprecationNotice>>;
+}
 
 suite('UpdateAnalyzer Test Suite', () => {
 	const createContext = (
-		allDependencies: Record<string, string> = {},
+		allDependencies: Record<string, string>,
 	): AnalysisContext => ({
 		packageJson: {},
 		allDependencies,
-		dependencyRanges: {},
 		workspacePath: '/test',
 	});
 
-	suite('Update Type Detection', () => {
-		test('should detect major updates', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
+	/**
+	 * Runs the analyzer against a fake registry. Packages missing from
+	 * `latest` fail to fetch, like a package that does not exist.
+	 */
+	const analyze = async (
+		dependencies: Record<string, string>,
+		registry: Registry,
+		requested: string[] = [],
+	): Promise<Finding[]> => {
+		const analyzer = createUpdateAnalyzer({
+			fetchLatestVersion: async (name) => {
+				requested.push(name);
+				const latest = registry.latest?.[name];
+				return latest ? success(latest) : failure(`${name} not found`);
+			},
+			fetchDeprecation: async (name) =>
+				success(registry.deprecated?.[name] ?? null),
 		});
 
-		test('should detect minor updates', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
+		const result = await analyzer.analyze(createContext(dependencies));
 
-			const result = await analyzer.analyze(context);
+		assert.ok(result.success, 'analysis should succeed');
+		return result.data;
+	};
 
-			assert.strictEqual(result.success, true);
+	suite('Updates the declared range cannot reach', () => {
+		test('reports a major update as a warning with both versions', async () => {
+			const findings = await analyze(
+				{ react: '^17.0.2' },
+				{ latest: { react: '18.3.1' } },
+			);
+
+			assert.strictEqual(findings.length, 1);
+			assert.strictEqual(findings[0].type, 'warning');
+			assert.strictEqual(
+				findings[0].message,
+				'react: Major update available ^17.0.2 → 18.3.1 (may contain breaking changes)',
+			);
+			assert.strictEqual(findings[0].dependency, 'react');
+			assert.deepStrictEqual(findings[0].meta, {
+				currentVersion: '^17.0.2',
+				latestVersion: '18.3.1',
+				updateType: 'major',
+				url: 'https://www.npmjs.com/package/react/v/18.3.1',
+			});
 		});
 
-		test('should detect patch updates', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
+		test('reports a minor update outside a tilde range as info', async () => {
+			const findings = await analyze(
+				{ express: '~4.17.1' },
+				{ latest: { express: '4.21.0' } },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-	});
-
-	suite('Severity Levels', () => {
-		test('should flag major updates as warnings', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
+			assert.strictEqual(findings.length, 1);
+			assert.strictEqual(findings[0].type, 'info');
+			assert.strictEqual(
+				findings[0].message,
+				'express: Minor update available ~4.17.1 → 4.21.0 (new features)',
+			);
 		});
 
-		test('should flag minor updates as info', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
+		test('reports a patch update for a pinned version as info', async () => {
+			const findings = await analyze(
+				{ 'node-fetch': '2.6.7' },
+				{ latest: { 'node-fetch': '2.6.9' } },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
+			assert.strictEqual(findings.length, 1);
+			assert.strictEqual(findings[0].type, 'info');
+			assert.strictEqual(
+				findings[0].message,
+				'node-fetch: Patch update available 2.6.7 → 2.6.9 (bug fixes)',
+			);
 		});
 
-		test('should flag patch updates as info', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
+		test('treats a 0.x minor bump as outside a caret range', async () => {
+			const findings = await analyze(
+				{ esbuild: '^0.27.1' },
+				{ latest: { esbuild: '0.28.2' } },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-	});
-
-	suite('Version Comparison', () => {
-		test('should handle caret range versions', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
+			assert.strictEqual(findings.length, 1);
+			assert.strictEqual(findings[0].meta?.['updateType'], 'minor');
 		});
 
-		test('should handle tilde range versions', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
+		test('does not tag updates as maintenance, which would strike them through as deprecated', async () => {
+			const findings = await analyze(
+				{ react: '^17.0.2' },
+				{ latest: { react: '18.3.1' } },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should handle exact versions', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should sanitize version prefixes', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-	});
-
-	suite('Pre-release Versions', () => {
-		test('should skip pre-release versions', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should not flag alpha versions', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should not flag beta versions', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should not flag rc versions', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
+			assert.deepStrictEqual(findings[0].tags, [FINDING_TAGS.UPDATES]);
 		});
 	});
 
-	suite('Multiple Dependencies', () => {
-		test('should analyze multiple packages', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
+	suite('Ranges that already admit the latest release', () => {
+		test('reports nothing when a caret range covers the latest version', async () => {
+			const findings = await analyze(
+				{ semver: '^7.5.0' },
+				{ latest: { semver: '7.8.6' } },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
+			assert.deepStrictEqual(findings, []);
 		});
 
-		test('should handle mix of update types', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
+		test('reports nothing when the pinned version is the latest', async () => {
+			const findings = await analyze(
+				{ lodash: '4.17.21' },
+				{ latest: { lodash: '4.17.21' } },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
+			assert.deepStrictEqual(findings, []);
 		});
 
-		test('should handle packages with no updates', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
+		test('reports nothing for an open-ended range', async () => {
+			const findings = await analyze(
+				{ typescript: '>=4.0.0', chalk: '*' },
+				{ latest: { typescript: '5.9.3', chalk: '5.3.0' } },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
+			assert.deepStrictEqual(findings, []);
 		});
 	});
 
-	suite('Edge Cases', () => {
-		test('should handle empty dependencies', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
+	suite('Versions that are not an upgrade', () => {
+		test('ignores a pre-release published as latest', async () => {
+			const findings = await analyze(
+				{ next: '^14.0.0' },
+				{ latest: { next: '15.0.0-rc.1' } },
+			);
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				assert.strictEqual(result.data.length, 0);
-			}
+			assert.deepStrictEqual(findings, []);
 		});
 
-		test('should handle undefined dependencies', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context: AnalysisContext = {
-				packageJson: {},
-				allDependencies: {},
-				dependencyRanges: {},
-				workspacePath: '/test',
+		test('ignores a latest version older than the declared one', async () => {
+			const findings = await analyze(
+				{ react: '^19.0.0' },
+				{ latest: { react: '18.3.1' } },
+			);
+
+			assert.deepStrictEqual(findings, []);
+		});
+
+		test('ignores a registry answer that is not a version', async () => {
+			const findings = await analyze(
+				{ react: '^17.0.0' },
+				{ latest: { react: 'not-a-version' } },
+			);
+
+			assert.deepStrictEqual(findings, []);
+		});
+	});
+
+	suite('Specifiers that are not registry ranges', () => {
+		test('skips them without querying the registry', async () => {
+			const requested: string[] = [];
+			const specs = {
+				'workspace-pkg': 'workspace:*',
+				'local-pkg': 'file:../local-pkg',
+				'git-pkg': 'github:user/repo#v2.0.0',
+				'url-pkg': 'git+https://github.com/user/repo.git#v3.1.0',
+				'alias-pkg': 'npm:other-pkg@^1.0.0',
+				'tag-pkg': 'latest',
 			};
+			const latest = Object.fromEntries(
+				Object.keys(specs).map((name) => [name, '99.0.0']),
+			);
 
-			const result = await analyzer.analyze(context);
+			const findings = await analyze(specs, { latest }, requested);
 
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				assert.strictEqual(result.data.length, 0);
+			assert.deepStrictEqual(findings, []);
+			assert.deepStrictEqual(requested, []);
+		});
+	});
+
+	suite('npm deprecation notices', () => {
+		test('reports the registry notice for the resolved version as a warning', async () => {
+			const findings = await analyze(
+				{ request: '^2.88.0' },
+				{
+					latest: { request: '2.88.2' },
+					deprecated: {
+						request: {
+							version: '2.88.2',
+							message:
+								'request has been deprecated, see https://github.com/request/request/issues/3142',
+						},
+					},
+				},
+			);
+
+			assert.strictEqual(findings.length, 1);
+			assert.strictEqual(findings[0].type, 'warning');
+			assert.strictEqual(
+				findings[0].message,
+				'Deprecated on npm: request@2.88.2 - request has been deprecated, see https://github.com/request/request/issues/3142',
+			);
+			assert.strictEqual(findings[0].dependency, 'request');
+			assert.ok(findings[0].tags?.includes(FINDING_TAGS.REPLACEMENT));
+			assert.strictEqual(
+				findings[0].meta?.['url'],
+				'https://www.npmjs.com/package/request/v/2.88.2',
+			);
+		});
+
+		test('reports both the deprecation and the update when both apply', async () => {
+			const findings = await analyze(
+				{ eslint: '^8.57.0' },
+				{
+					latest: { eslint: '9.39.1' },
+					deprecated: {
+						eslint: {
+							version: '8.57.1',
+							message: 'This version is no longer supported.',
+						},
+					},
+				},
+			);
+
+			assert.deepStrictEqual(
+				findings.map((f) => f.message),
+				[
+					'eslint: Major update available ^8.57.0 → 9.39.1 (may contain breaking changes)',
+					'Deprecated on npm: eslint@8.57.1 - This version is no longer supported.',
+				],
+			);
+		});
+
+		test('says the package could not be checked when the deprecation lookup fails', async () => {
+			const analyzer = createUpdateAnalyzer({
+				fetchLatestVersion: async () => success('1.0.0'),
+				fetchDeprecation: async () => failure('registry unreachable'),
+			});
+
+			const result = await analyzer.analyze(createContext({ pkg: '^1.0.0' }));
+
+			assert.ok(result.success);
+			assert.deepStrictEqual(
+				result.data.map((f) => [f.type, f.message]),
+				[
+					[
+						'info',
+						'Could not check 1 dependency for updates (pkg): registry unreachable',
+					],
+				],
+			);
+		});
+
+		test('skips deprecation checks when no lookup is injected', async () => {
+			const analyzer = createUpdateAnalyzer({
+				fetchLatestVersion: async () => success('1.0.0'),
+			});
+
+			const result = await analyzer.analyze(createContext({ pkg: '^1.0.0' }));
+
+			assert.ok(result.success);
+			assert.deepStrictEqual(result.data, []);
+		});
+	});
+
+	suite('Registry failures', () => {
+		test('still reports the packages that could be fetched', async () => {
+			const findings = await analyze(
+				{ 'missing-package': '^1.0.0', react: '^17.0.2' },
+				{ latest: { react: '18.3.1' } },
+			);
+
+			assert.deepStrictEqual(
+				findings.map((f) => f.dependency),
+				['react', undefined],
+			);
+		});
+
+		test('lists every package that could not be checked in one info finding on the dependencies section', async () => {
+			const findings = await analyze(
+				{ ghost: '^1.0.0', phantom: '^2.0.0', react: '^18.3.1' },
+				{ latest: { react: '18.3.1' } },
+			);
+
+			assert.deepStrictEqual(findings, [
+				{
+					type: 'info',
+					message:
+						'Could not check 2 dependencies for updates (ghost, phantom): ghost not found',
+					location: ['dependencies'],
+					tags: [FINDING_TAGS.UPDATES],
+					meta: { packages: ['ghost', 'phantom'] },
+				},
+			]);
+		});
+
+		test('fails with UPDATE_ANALYSIS_ERROR when the lookup throws', async () => {
+			const analyzer = createUpdateAnalyzer({
+				fetchLatestVersion: async () => {
+					throw new Error('socket hang up');
+				},
+			});
+
+			const result = await analyzer.analyze(createContext({ pkg: '^1.0.0' }));
+
+			assert.strictEqual(result.success, false);
+			if (!result.success) {
+				assert.strictEqual(result.error.code, 'UPDATE_ANALYSIS_ERROR');
+				assert.strictEqual(result.error.message, 'socket hang up');
 			}
 		});
 
-		test('should handle API failures gracefully', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({ 'unknown-package': '^1.0.0' });
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should handle invalid version formats', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({
-				'bad-version': 'invalid',
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-	});
-
-	suite('Finding Metadata', () => {
-		test('should include current version in metadata', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should include latest version in metadata', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should include update type in metadata', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should include dependency name in finding', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-	});
-
-	suite('Tags Validation', () => {
-		test('should tag findings with UPDATES', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should tag findings with MAINTENANCE', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-	});
-
-	suite('Message Content', () => {
-		test('should include breaking changes warning for major', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should include new features note for minor', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should include bug fixes note for patch', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should show version transition', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-	});
-
-	suite('No Update Scenarios', () => {
-		test('should not flag when current equals latest', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should not flag when current is newer than latest', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should handle latest keyword', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({
-				'some-package': 'latest',
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-	});
-
-	suite('Error Recovery', () => {
-		test('should continue after individual package fetch failure', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({
-				'good-package': '^1.0.0',
-				'bad-package': '^1.0.0',
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should handle network timeouts', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({ 'test-package': '^1.0.0' });
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-	});
-
-	suite('Version Sanitization', () => {
-		test('should handle versions with >= prefix', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({
-				package: '>=1.0.0',
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should handle versions with <= prefix', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({
-				package: '<=2.0.0',
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-		});
-
-		test('should handle complex range versions', async () => {
-			const analyzer = createUpdateAnalyzer();
-			const context = createContext({
-				package: '>=1.0.0 <2.0.0',
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
+		test('reports nothing for a package without dependencies', async () => {
+			assert.deepStrictEqual(await analyze({}, {}), []);
 		});
 	});
 });

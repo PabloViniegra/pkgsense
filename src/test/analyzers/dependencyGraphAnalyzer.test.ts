@@ -12,7 +12,6 @@ suite('DependencyGraphAnalyzer Test Suite', () => {
 	): AnalysisContext => ({
 		packageJson,
 		allDependencies,
-		dependencyRanges: {},
 		workspacePath: '/test',
 	});
 

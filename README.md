@@ -6,9 +6,9 @@
 
 ### 🎯 Core Analysis Features
 
-- **🚨 Deprecated Packages** - Detects outdated packages (like `moment`, `request`, `left-pad`) with recommended alternatives
-- **📦 Bundle Size Analysis** - Shows real-time package sizes from Bundlephobia API and warns about heavy dependencies
-- **🔒 Security Scanning** - Integrates with `npm audit` to detect vulnerabilities
+- **🚨 Deprecated Packages** - Reports the deprecation notice npm publishes for the version your range resolves to, and notes maintenance-mode packages such as `moment`
+- **📦 Bundle Size Analysis** - Shows the Bundlephobia size of each production dependency, for the version your range resolves to
+- **🔒 Security Scanning** - Runs `npm audit` or `pnpm audit` against your lockfile and links each finding to its advisory
 - **🔄 Update Detection** - Identifies outdated dependencies with available updates (major/minor/patch)
 - **📝 Metadata Validation** - Checks for missing recommended fields (description, keywords, author, license, repository, bugs, homepage)
 - **⚙️ Script Analysis** - Detects dangerous commands and inefficient patterns in npm scripts
@@ -27,16 +27,16 @@
   - Duplicate dependencies appear faded
   - Related information links to npm packages
 - **💡 Quick Fix Actions** - One-click solutions for common issues:
-  - Remove deprecated dependencies
+  - Open the npm deprecation notice of a deprecated dependency
   - Update to latest versions
   - Add missing metadata fields
-  - Fix vulnerabilities with npm audit
+  - Fix vulnerabilities with `npm audit fix` or `pnpm audit --fix`
 
 ### Diagnostic Levels
 
-- **Error** (🔴): Critical issues like very large packages (>1MB), security vulnerabilities, or engine mismatches
-- **Warning** (🟡): Important issues like deprecated packages, heavy dependencies (>200KB), or major updates available
-- **Info** (ℹ️): Suggestions for improvement, best practices, and minor/patch updates
+- **Error** (🔴): High or critical security vulnerabilities
+- **Warning** (🟡): Low or moderate vulnerabilities, packages deprecated on npm, very heavy dependencies (>1MB), engine mismatches, duplicate dependencies, or major updates available
+- **Info** (ℹ️): Suggestions for improvement, best practices, bundle sizes, minor/patch updates, and checks that could not run (an audit without a lockfile, a registry lookup that failed), so a missing warning is never mistaken for a clean result
 
 ## 🚀 Installation
 
@@ -77,10 +77,11 @@ Or use the command ID: `pkgsense.analyze`
 
 When diagnostics appear in your `package.json`, look for the 💡 lightbulb icon:
 
-1. **Remove Deprecated Dependency**
+1. **View Deprecation Notice**
    ```
-   Click on diagnostic → 💡 → "Remove deprecated dependency"
+   Click on diagnostic → 💡 → "View deprecation notice on npm"
    ```
+   Removing the package would not replace what it provides; the notice usually names its successor.
 
 2. **Update to Latest Version**
    ```
@@ -95,7 +96,9 @@ When diagnostics appear in your `package.json`, look for the 💡 lightbulb icon
 4. **Fix Vulnerability**
    ```
    Click on diagnostic → 💡 → "Fix vulnerability"
-   Options: Run npm audit fix, Update manually, or View on npm
+   Options: Run npm audit fix / pnpm audit --fix (in the lockfile's directory),
+            Update manually (only for advisories against the dependency itself),
+            or View on npm
    ```
 
 ### Available Commands
@@ -161,9 +164,11 @@ This configuration enables analysis but skips bundle size checks (useful for off
 
 | Threshold | Size | Level | Visual Effect |
 |-----------|------|-------|---------------|
-| Very Large | >1MB | Error (🔴) | Red squiggly underline |
-| Large | >200KB | Warning (🟡) | Yellow squiggly underline |
-| Medium | >50KB | Info (ℹ️) | Blue squiggly underline |
+| Very heavy | >1MB minified | Warning (🟡) | Yellow squiggly underline |
+| Heavy | >200KB minified | Info (ℹ️) | Blue squiggly underline |
+| Moderately large | >50KB minified | Info (ℹ️) | Blue squiggly underline |
+
+Only `dependencies` are measured; `devDependencies` do not ship in your bundle.
 
 ### Notification Settings
 
@@ -173,8 +178,8 @@ This configuration enables analysis but skips bundle size checks (useful for off
 
 ## 🧪 Quality & Testing
 
-- **442 Tests** passing with 100% success rate
-- **Type-safe** implementation with no `any` types
+- **494 tests** covering every analyzer, the diagnostics and the quick fixes
+- **Type-safe** implementation
 - **Code Quality**: All functions under 50 lines
 - **Linting**: Clean with Biome
 - **Test Coverage**: Comprehensive unit tests for all features
@@ -216,7 +221,12 @@ pkgsense uses a modular analyzer architecture:
 
 ## 🔧 Known Limitations
 
-- Requires `npm` to be installed for vulnerability scanning
+- Vulnerability scanning needs a `package-lock.json` or `pnpm-lock.yaml` next to (or above) the `package.json`, and the matching tool on your PATH. Yarn and Bun lockfiles are not audited
+- Vulnerabilities in transitive dependencies are summarised on the direct dependency that brings them in
+- In a monorepo the audit runs from the root lockfile and covers the whole workspace: a vulnerability is shown on a package's `package.json` when that package lists the affected dependency, even if the vulnerable copy comes from another workspace package
+- In untrusted workspaces the vulnerability audit and engine checks are disabled, since both run programs from the workspace (`npm`/`pnpm`, `node`)
+- A version range resolves like npm does: the `latest` tag if it matches and is not deprecated, otherwise the highest matching version that is not deprecated
+- Engine checks compare against the `node`/`npm` found on your PATH, which may differ from the one your project runs on
 - API rate limits may affect large dependency lists (>100 packages)
 - Network connectivity required for real-time data
 - npm registry timeout set to 5 seconds per package
@@ -251,7 +261,26 @@ pnpm run package
 
 ## 📝 Changelog
 
-### v1.2.0 (Latest)
+### v1.3.0 (Latest)
+
+**Accuracy: every diagnostic is now backed by a source you can check**
+- 🔒 Vulnerabilities are read from the real `npm audit` / `pnpm audit` report of your lockfile, attributed to the direct dependency and linked to the advisory
+- 🚨 Deprecations come from the npm registry notice for the version your range resolves to, replacing a hardcoded list
+- 📜 Licenses are read from the version your range resolves to, not from the latest release
+- 📦 Bundle sizes are measured for the resolved version, for production dependencies only; size alone is no longer an error
+- 🔧 Engine mismatches report the required range and the version actually found
+- ⚙️ Script checks no longer flag `rm -rf` as a security risk or words that merely contain `eval`/`sudo`; piping `curl`/`wget` to a shell is now reported
+- 🙈 Private packages are no longer asked for publishing metadata or a `files` field
+- 💡 Quick fixes are offered only for the diagnostics they can actually fix, and edit only the affected key, keeping the file's indentation and line endings
+- ℹ️ An audit that cannot run, or registry lookups that fail, are reported as info instead of passing silently
+- 📍 Diagnostics are placed by parsing the file, so one-line sections and keys repeated in `scripts`/`overrides` no longer misplace them; engine mismatches point at the `engines` entry
+- 🔀 A package listed in both `dependencies` and `devDependencies` is checked with the `dependencies` range, the one npm installs
+- 📜 Each `UNLICENSED` dependency gets its own warning, and a package that publishes no license is told apart from a failed lookup
+- 🛡️ Workspace trust: audit and engine checks only run in trusted workspaces
+- ⏱️ Analyses of the same file never overlap; edits are debounced
+- 🧪 Tests are now compiled and type-checked on every run (494 total)
+
+### v1.2.0
 
 **Parametrization & Configuration**
 - ⚙️ Added global analyzer enable/disable switch (`pkgsense.enableAnalyzers`)

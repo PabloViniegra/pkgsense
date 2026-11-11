@@ -382,108 +382,137 @@ suite('DiagnosticsManager Test Suite', () => {
 	});
 
 	suite('Enhanced Diagnostic Tags', () => {
-		test('should apply Deprecated tag for replacement findings', () => {
-			const findings: Finding[] = [
-				{
-					type: 'warning',
-					message: 'Deprecated package',
-					dependency: 'moment',
-					tags: [FINDING_TAGS.REPLACEMENT],
-				},
-			];
+		const uri = vscode.Uri.file('/pkgsense-diagnostics-tags/package.json');
 
-			manager.setFindings(testUri, findings);
+		const tagsFor = (tags?: Finding['tags']): vscode.DiagnosticTag[] => {
+			const finding: Finding = {
+				type: 'warning',
+				message: 'Finding',
+				dependency: 'pkg',
+			};
+			manager.setFindings(uri, [tags ? { ...finding, tags } : finding]);
 
-			assert.ok(true);
+			const [diagnostic] = vscode.languages.getDiagnostics(uri);
+			return [...(diagnostic.tags ?? [])];
+		};
+
+		test('strikes through packages that should be replaced', () => {
+			assert.deepStrictEqual(tagsFor([FINDING_TAGS.REPLACEMENT]), [
+				vscode.DiagnosticTag.Deprecated,
+			]);
 		});
 
-		test('should apply Deprecated tag for maintenance findings', () => {
-			const findings: Finding[] = [
-				{
-					type: 'warning',
-					message: 'No longer maintained',
-					dependency: 'request',
-					tags: [FINDING_TAGS.MAINTENANCE],
-				},
-			];
-
-			manager.setFindings(testUri, findings);
-
-			assert.ok(true);
+		test('does not strike through maintenance or update findings', () => {
+			assert.deepStrictEqual(tagsFor([FINDING_TAGS.MAINTENANCE]), []);
+			assert.deepStrictEqual(tagsFor([FINDING_TAGS.UPDATES]), []);
 		});
 
-		test('should apply Unnecessary tag for duplication findings', () => {
-			const findings: Finding[] = [
-				{
-					type: 'warning',
-					message: 'Duplicate dependency',
-					dependency: 'lodash',
-					tags: [FINDING_TAGS.DUPLICATION],
-				},
-			];
-
-			manager.setFindings(testUri, findings);
-
-			assert.ok(true);
+		test('fades duplicated dependencies', () => {
+			assert.deepStrictEqual(tagsFor([FINDING_TAGS.DUPLICATION]), [
+				vscode.DiagnosticTag.Unnecessary,
+			]);
 		});
 
-		test('should apply multiple tags when appropriate', () => {
-			const findings: Finding[] = [
-				{
-					type: 'warning',
-					message: 'Deprecated and duplicate',
-					dependency: 'pkg',
-					tags: [FINDING_TAGS.REPLACEMENT, FINDING_TAGS.DUPLICATION],
-				},
-			];
-
-			manager.setFindings(testUri, findings);
-
-			assert.ok(true);
+		test('applies both tags to a deprecated duplicate', () => {
+			assert.deepStrictEqual(
+				tagsFor([FINDING_TAGS.REPLACEMENT, FINDING_TAGS.DUPLICATION]),
+				[vscode.DiagnosticTag.Deprecated, vscode.DiagnosticTag.Unnecessary],
+			);
 		});
 
-		test('should not apply tags for other finding types', () => {
-			const findings: Finding[] = [
-				{
-					type: 'info',
-					message: 'Info message',
-					dependency: 'pkg',
-					tags: [FINDING_TAGS.QUALITY],
-				},
-			];
+		test('applies no tags to other findings', () => {
+			assert.deepStrictEqual(tagsFor([FINDING_TAGS.QUALITY]), []);
+			assert.deepStrictEqual(tagsFor([FINDING_TAGS.SECURITY]), []);
+			assert.deepStrictEqual(tagsFor([]), []);
+			assert.deepStrictEqual(tagsFor(), []);
+		});
+	});
 
-			manager.setFindings(testUri, findings);
+	suite('Published diagnostics', () => {
+		const uri = vscode.Uri.file('/pkgsense-diagnostics-published/package.json');
 
-			assert.ok(true);
+		const publish = (finding: Finding): vscode.Diagnostic => {
+			manager.setFindings(uri, [finding]);
+			const diagnostics = vscode.languages.getDiagnostics(uri);
+			assert.strictEqual(diagnostics.length, 1);
+			return diagnostics[0];
+		};
+
+		test('maps finding types to diagnostic severities', () => {
+			const severityOf = (type: Finding['type']) =>
+				publish({ type, message: 'Finding' }).severity;
+
+			assert.strictEqual(severityOf('error'), vscode.DiagnosticSeverity.Error);
+			assert.strictEqual(
+				severityOf('warning'),
+				vscode.DiagnosticSeverity.Warning,
+			);
+			assert.strictEqual(
+				severityOf('info'),
+				vscode.DiagnosticSeverity.Information,
+			);
 		});
 
-		test('should handle findings with no tags', () => {
-			const findings: Finding[] = [
-				{
-					type: 'error',
-					message: 'Error without tags',
-					dependency: 'pkg',
-				},
-			];
+		test('keeps the message, range and source of the finding', () => {
+			const diagnostic = publish({
+				type: 'warning',
+				message: 'react: Major update available ^17.0.2 → 18.3.1',
+				range: new vscode.Range(7, 5, 7, 10),
+			});
 
-			manager.setFindings(testUri, findings);
-
-			assert.ok(true);
+			assert.strictEqual(
+				diagnostic.message,
+				'react: Major update available ^17.0.2 → 18.3.1',
+			);
+			assert.strictEqual(diagnostic.source, 'Package Analyzer');
+			assert.ok(diagnostic.range.isEqual(new vscode.Range(7, 5, 7, 10)));
 		});
 
-		test('should handle findings with empty tags array', () => {
-			const findings: Finding[] = [
-				{
-					type: 'warning',
-					message: 'Warning with empty tags',
-					dependency: 'pkg',
-					tags: [],
+		test('links the diagnostic code to the evidence for the finding', () => {
+			const diagnostic = publish({
+				type: 'error',
+				message: 'Vulnerability in lodash: Prototype Pollution',
+				dependency: 'lodash',
+				meta: { url: 'https://github.com/advisories/GHSA-p6mc-m468-83gw' },
+			});
+
+			const { code } = diagnostic;
+			assert.ok(typeof code === 'object' && code !== null);
+			assert.strictEqual(code.value, 'lodash');
+			assert.strictEqual(
+				code.target.toString(),
+				'https://github.com/advisories/GHSA-p6mc-m468-83gw',
+			);
+		});
+
+		test('links findings without a dependency under a generic code', () => {
+			const diagnostic = publish({
+				type: 'info',
+				message: 'See the docs',
+				meta: {
+					url: 'https://docs.npmjs.com/cli/configuring-npm/package-json',
 				},
-			];
+			});
 
-			manager.setFindings(testUri, findings);
+			const { code } = diagnostic;
+			assert.ok(typeof code === 'object' && code !== null);
+			assert.strictEqual(code.value, 'details');
+		});
 
-			assert.ok(true);
+		test('uses the bare dependency name as code when there is no evidence link', () => {
+			const diagnostic = publish({
+				type: 'warning',
+				message: 'Duplicate dependency',
+				dependency: '@scope/pkg',
+			});
+
+			assert.strictEqual(diagnostic.code, '@scope/pkg');
+		});
+
+		test('sets no code for findings about the package itself', () => {
+			const diagnostic = publish({ type: 'info', message: 'Missing field' });
+
+			assert.strictEqual(diagnostic.code, undefined);
 		});
 	});
 

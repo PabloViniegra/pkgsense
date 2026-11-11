@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import {
 	analyzePackageDocument,
@@ -16,6 +17,146 @@ import {
 	updateDependencyCommand,
 } from './commands/packageCommands';
 import { CONSTANTS } from './shared/constants';
+import { Debouncer, SerialRunner } from './utils/scheduling';
+
+type Analyze = (doc: vscode.TextDocument) => Promise<void>;
+
+const isPackageJsonDocument = (doc: vscode.TextDocument) =>
+	doc.languageId === 'json' &&
+	path.basename(doc.fileName) === CONSTANTS.PACKAGE_JSON_FILENAME;
+
+function registerCodeActions(context: vscode.ExtensionContext): void {
+	// Register code action provider for inline suggestions
+	const codeActionProvider = vscode.languages.registerCodeActionsProvider(
+		{ language: 'json', pattern: `**/${CONSTANTS.PACKAGE_JSON_FILENAME}` },
+		new PackageCodeActionProvider(),
+		{
+			providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
+		},
+	);
+	context.subscriptions.push(codeActionProvider);
+}
+
+function registerDocumentAnalysis(
+	context: vscode.ExtensionContext,
+	diagnostics: DiagnosticsManager,
+): Analyze {
+	// An analysis that finished after a newer one would overwrite fresh
+	// diagnostics with stale ones, so analyses of a file never overlap
+	const analyses = new SerialRunner();
+	// Typing fires a change event per keystroke; each analysis spawns an audit
+	// and queries the registry, so wait for a pause before running one
+	const typing = new Debouncer(CONSTANTS.ANALYSIS_DEBOUNCE_MS);
+	context.subscriptions.push(typing);
+
+	const analyzeIfPackage = async (doc: vscode.TextDocument) => {
+		if (!doc || !isPackageJsonDocument(doc)) return;
+		const key = doc.uri.toString();
+		typing.cancel(key);
+		await analyses.run(key, () => analyzePackageDocument(doc, diagnostics));
+	};
+
+	const analyzeAfterPause = (doc: vscode.TextDocument) => {
+		if (!isPackageJsonDocument(doc)) return;
+		typing.schedule(doc.uri.toString(), () => analyzeIfPackage(doc));
+	};
+
+	vscode.workspace.onDidOpenTextDocument(
+		analyzeIfPackage,
+		null,
+		context.subscriptions,
+	);
+	vscode.workspace.onDidSaveTextDocument(
+		analyzeIfPackage,
+		null,
+		context.subscriptions,
+	);
+	vscode.workspace.onDidChangeTextDocument(
+		(e) => analyzeAfterPause(e.document),
+		null,
+		context.subscriptions,
+	);
+
+	return analyzeIfPackage;
+}
+
+function registerAnalyzeCommand(
+	context: vscode.ExtensionContext,
+	analyzeIfPackage: Analyze,
+): void {
+	// Register analyze command
+	const analyzeCommand = vscode.commands.registerCommand(
+		'pkgsense.analyze',
+		async () => {
+			const editor = vscode.window.activeTextEditor;
+			if (!editor) {
+				vscode.window.showErrorMessage(CONSTANTS.ERROR_NO_EDITOR);
+				return;
+			}
+			await analyzeIfPackage(editor.document);
+			vscode.window.showInformationMessage(CONSTANTS.INFO_ANALYSIS_COMPLETED);
+		},
+	);
+	context.subscriptions.push(analyzeCommand);
+}
+
+function registerPackageCommands(context: vscode.ExtensionContext): void {
+	// Register package modification commands
+	context.subscriptions.push(
+		vscode.commands.registerCommand(
+			'pkgsense.removeDependency',
+			removeDependencyCommand,
+		),
+		vscode.commands.registerCommand(
+			'pkgsense.updateDependency',
+			updateDependencyCommand,
+		),
+		vscode.commands.registerCommand(
+			'pkgsense.addMetadataField',
+			addMetadataFieldCommand,
+		),
+		vscode.commands.registerCommand(
+			'pkgsense.fixVulnerability',
+			fixVulnerabilityCommand,
+		),
+	);
+}
+
+function registerReanalysisTriggers(
+	context: vscode.ExtensionContext,
+	diagnostics: DiagnosticsManager,
+	analyzeIfPackage: Analyze,
+): void {
+	const reanalyzeActiveEditor = async () => {
+		resetDefaultManager();
+		const editor = vscode.window.activeTextEditor;
+		if (editor) {
+			await analyzeIfPackage(editor.document);
+		}
+	};
+
+	const configListener = vscode.workspace.onDidChangeConfiguration(
+		async (event) => {
+			if (!hasAnalyzerConfigChanged(event)) {
+				return;
+			}
+
+			if (!getAnalyzerConfiguration().globalEnabled) {
+				resetDefaultManager();
+				diagnostics.clear();
+				return;
+			}
+
+			await reanalyzeActiveEditor();
+		},
+	);
+	context.subscriptions.push(configListener);
+
+	// Audit and engine checks are held back until the workspace is trusted
+	context.subscriptions.push(
+		vscode.workspace.onDidGrantWorkspaceTrust(reanalyzeActiveEditor),
+	);
+}
 
 /**
  * Activates the pkgsense extension.
@@ -40,124 +181,16 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 	context.subscriptions.push(diagnostics);
 
-	// Register code action provider for inline suggestions
-	const codeActionProvider = vscode.languages.registerCodeActionsProvider(
-		{ language: 'json', pattern: `**/${CONSTANTS.PACKAGE_JSON_FILENAME}` },
-		new PackageCodeActionProvider(),
-		{
-			providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
-		},
-	);
-	context.subscriptions.push(codeActionProvider);
-
-	const analyzeIfPackage = (doc: vscode.TextDocument) => {
-		if (!doc) return;
-		if (doc.languageId !== 'json') return;
-		if (!doc.fileName.endsWith(CONSTANTS.PACKAGE_JSON_FILENAME)) return;
-		analyzePackageDocument(doc, diagnostics);
-	};
-
-	vscode.workspace.onDidOpenTextDocument(
-		analyzeIfPackage,
-		null,
-		context.subscriptions,
-	);
-	vscode.workspace.onDidSaveTextDocument(
-		analyzeIfPackage,
-		null,
-		context.subscriptions,
-	);
-	vscode.workspace.onDidChangeTextDocument(
-		(e) => analyzeIfPackage(e.document),
-		null,
-		context.subscriptions,
-	);
+	registerCodeActions(context);
+	const analyzeIfPackage = registerDocumentAnalysis(context, diagnostics);
 
 	if (vscode.window.activeTextEditor) {
 		analyzeIfPackage(vscode.window.activeTextEditor.document);
 	}
 
-	// Register analyze command
-	const analyzeCommand = vscode.commands.registerCommand(
-		'pkgsense.analyze',
-		async () => {
-			const editor = vscode.window.activeTextEditor;
-			if (!editor) {
-				vscode.window.showErrorMessage(CONSTANTS.ERROR_NO_EDITOR);
-				return;
-			}
-			analyzeIfPackage(editor.document);
-			vscode.window.showInformationMessage(CONSTANTS.INFO_ANALYSIS_COMPLETED);
-		},
-	);
-	context.subscriptions.push(analyzeCommand);
-
-	// Register package modification commands
-	const removeDependency = vscode.commands.registerCommand(
-		'pkgsense.removeDependency',
-		removeDependencyCommand,
-	);
-	context.subscriptions.push(removeDependency);
-
-	const updateDependency = vscode.commands.registerCommand(
-		'pkgsense.updateDependency',
-		updateDependencyCommand,
-	);
-	context.subscriptions.push(updateDependency);
-
-	const addMetadataField = vscode.commands.registerCommand(
-		'pkgsense.addMetadataField',
-		addMetadataFieldCommand,
-	);
-	context.subscriptions.push(addMetadataField);
-
-	const fixVulnerability = vscode.commands.registerCommand(
-		'pkgsense.fixVulnerability',
-		fixVulnerabilityCommand,
-	);
-	context.subscriptions.push(fixVulnerability);
-
-	// Register configuration change listener
-	// Use a flag to prevent race conditions from rapid config changes
-	let isReanalyzing = false;
-
-	const configListener = vscode.workspace.onDidChangeConfiguration(
-		async (event) => {
-			// Only handle analyzer configuration changes
-			if (!hasAnalyzerConfigChanged(event)) {
-				return;
-			}
-
-			// Prevent concurrent re-analyses
-			if (isReanalyzing) {
-				return;
-			}
-
-			isReanalyzing = true;
-			try {
-				// Reset the analysis manager to pick up new configuration
-				resetDefaultManager();
-
-				// Get current configuration
-				const config = getAnalyzerConfiguration();
-
-				// If all analyzers are disabled, clear all diagnostics
-				if (!config.globalEnabled) {
-					diagnostics.clear();
-					return;
-				}
-
-				// Re-analyze the current package.json if one is open
-				const editor = vscode.window.activeTextEditor;
-				if (editor) {
-					await analyzeIfPackage(editor.document);
-				}
-			} finally {
-				isReanalyzing = false;
-			}
-		},
-	);
-	context.subscriptions.push(configListener);
+	registerAnalyzeCommand(context, analyzeIfPackage);
+	registerPackageCommands(context);
+	registerReanalysisTriggers(context, diagnostics, analyzeIfPackage);
 }
 
 /**

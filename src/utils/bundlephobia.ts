@@ -1,16 +1,20 @@
 import fetch from 'node-fetch';
+import * as semver from 'semver';
 import { type Result, failure, success } from '../shared/result';
 
 // Bundlephobia package information with readonly fields
 export interface BundlephobiaInfo {
 	readonly size: number;
 	readonly gzip: number;
+	/** Exact version Bundlephobia resolved and measured */
+	readonly version?: string;
 }
 
 // Raw API response from Bundlephobia
 interface BundlephobiaResponse {
 	readonly size?: number;
 	readonly gzip?: number;
+	readonly version?: unknown;
 }
 
 // Type guard with comprehensive validation
@@ -81,8 +85,43 @@ function sanitizePackageName(name: string): Result<string, string> {
 }
 
 function sanitizeVersion(version: string): string {
+	const trimmed = (version || '').toString().trim();
+
+	// Bundlephobia resolves ranges itself, so the measured version is the one
+	// a fresh install would get rather than the lower bound of the range
+	if (trimmed !== '' && semver.validRange(trimmed)) {
+		return trimmed;
+	}
+
 	const sanitized = (version || '').toString().replace(/^[^0-9]*/, '');
 	return sanitized || 'latest';
+}
+
+function toBundlephobiaInfo(
+	json: unknown,
+	name: string,
+): Result<BundlephobiaInfo, string> {
+	if (!isBundlephobiaResponse(json)) {
+		return failure(`Invalid response format from Bundlephobia for ${name}`);
+	}
+
+	const info = { size: json.size || 0, gzip: json.gzip || 0 };
+
+	return success(
+		typeof json.version === 'string'
+			? { ...info, version: json.version }
+			: info,
+	);
+}
+
+function describeFetchError(error: unknown, name: string): string {
+	if (!(error instanceof Error)) {
+		return `Error fetching bundlephobia data for ${name}: Unknown error`;
+	}
+	if (error.name === 'AbortError') {
+		return `Request timeout: Bundlephobia API did not respond within ${FETCH_TIMEOUT_MS}ms for ${name}`;
+	}
+	return `Error fetching bundlephobia data for ${name}: ${error.message}`;
 }
 
 /**
@@ -134,31 +173,8 @@ export async function fetchBundlephobia(
 			);
 		}
 
-		const json: unknown = await res.json();
-
-		if (!isBundlephobiaResponse(json)) {
-			return failure(
-				`Invalid response format from Bundlephobia for ${sanitizedName}`,
-			);
-		}
-
-		return success({
-			size: json.size || 0,
-			gzip: json.gzip || 0,
-		});
+		return toBundlephobiaInfo(await res.json(), sanitizedName);
 	} catch (error) {
-		if (error instanceof Error) {
-			if (error.name === 'AbortError') {
-				return failure(
-					`Request timeout: Bundlephobia API did not respond within ${FETCH_TIMEOUT_MS}ms for ${sanitizedName}`,
-				);
-			}
-			return failure(
-				`Error fetching bundlephobia data for ${sanitizedName}: ${error.message}`,
-			);
-		}
-		return failure(
-			`Error fetching bundlephobia data for ${sanitizedName}: Unknown error`,
-		);
+		return failure(describeFetchError(error, sanitizedName));
 	}
 }

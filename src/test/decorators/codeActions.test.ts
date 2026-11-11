@@ -1,501 +1,352 @@
 import * as assert from 'node:assert';
-import { suite, test } from 'mocha';
+import { suite, suiteSetup, suiteTeardown, test } from 'mocha';
 import * as vscode from 'vscode';
+import { createHeuristicsAnalyzer } from '../../analyzers/heuristicsAnalyzer';
+import { createMetadataAnalyzer } from '../../analyzers/metadataAnalyzer';
+import type { Analyzer, AnalysisContext } from '../../analyzers/types';
+import { createUpdateAnalyzer } from '../../analyzers/updateAnalyzer';
+import { parseAuditOutput } from '../../analyzers/vulnerabilityAnalyzer';
+import { createWeightAnalyzer } from '../../analyzers/weightAnalyzer';
 import { PackageCodeActionProvider } from '../../decorators/codeActions';
+import { DiagnosticsManager } from '../../decorators/diagnostics';
 import { CONSTANTS } from '../../shared/constants';
+import { success } from '../../shared/result';
+import type { Finding, PackageJson } from '../../types';
 
+/**
+ * The provider decides from the diagnostic alone, so these tests feed it the
+ * diagnostics the real analyzers produce: a quick fix that only matches a
+ * made-up message is a quick fix users never see.
+ */
 suite('PackageCodeActionProvider Test Suite', () => {
-	let provider: PackageCodeActionProvider;
+	const provider = new PackageCodeActionProvider();
+	const range = new vscode.Range(0, 0, 0, 1);
+	let manager: DiagnosticsManager;
+	let documentCount = 0;
 
-	setup(() => {
-		provider = new PackageCodeActionProvider();
+	suiteSetup(() => {
+		manager = new DiagnosticsManager('pkgsense-code-actions-test');
 	});
 
-	suite('File Name Filtering', () => {
-		test('should provide actions for package.json files', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'duplicate dependency found',
-				vscode.DiagnosticSeverity.Warning,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			const context = createMockContext([diagnostic]);
+	suiteTeardown(() => {
+		manager.dispose();
+	});
 
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
+	const createDocument = (fileName: string): vscode.TextDocument => {
+		const document: Pick<vscode.TextDocument, 'uri' | 'fileName'> = {
+			uri: vscode.Uri.file(fileName),
+			fileName,
+		};
+		// The provider only reads uri and fileName
+		return document as vscode.TextDocument;
+	};
 
-			// Assert
-			assert.ok(actions !== undefined);
+	const createContext = (packageJson: PackageJson): AnalysisContext => ({
+		packageJson,
+		allDependencies: {
+			...packageJson.dependencies,
+			...packageJson.devDependencies,
+		},
+		workspacePath: '/test',
+	});
+
+	const findingsOf = async (
+		analyzer: Analyzer,
+		packageJson: PackageJson,
+	): Promise<Finding[]> => {
+		const result = await analyzer.analyze(createContext(packageJson));
+		assert.ok(result.success, 'analysis should succeed');
+		return result.data;
+	};
+
+	const updateAnalyzer = (
+		latest: string,
+		deprecation: { version: string; message: string } | null = null,
+	): Analyzer =>
+		createUpdateAnalyzer({
+			fetchLatestVersion: async () => success(latest),
+			fetchDeprecation: async () => success(deprecation),
 		});
 
-		test('should not provide actions for non-package.json files', () => {
-			// Arrange
-			const document = createMockDocument('/test/tsconfig.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'Some error',
-				vscode.DiagnosticSeverity.Error,
+	/**
+	 * Publishes findings as diagnostics and asks the provider for the
+	 * actions of those matching `message`.
+	 */
+	const actionsFor = (
+		findings: Finding[],
+		message: RegExp,
+	): { document: vscode.TextDocument; actions: vscode.CodeAction[] } => {
+		documentCount += 1;
+		const document = createDocument(
+			`/pkgsense-code-actions/${documentCount}/package.json`,
+		);
+		manager.setFindings(document.uri, findings);
+
+		const diagnostics = vscode.languages
+			.getDiagnostics(document.uri)
+			.filter((d) => message.test(d.message));
+		assert.ok(diagnostics.length > 0, `no diagnostic matches ${message}`);
+
+		const actions = provider.provideCodeActions(document, range, {
+			diagnostics,
+			only: undefined,
+			triggerKind: vscode.CodeActionTriggerKind.Automatic,
+		});
+
+		return { document, actions: actions ?? [] };
+	};
+
+	const describe = (actions: vscode.CodeAction[]) =>
+		actions.map((a) => ({
+			title: a.title,
+			command: a.command?.command,
+			arguments: a.command?.arguments?.slice(1),
+		}));
+
+	suite('Scope', () => {
+		const finding: Finding = {
+			type: 'warning',
+			message: 'Duplicate dependency in dependencies and devDependencies: a.',
+			dependency: 'a',
+		};
+
+		const provide = (fileName: string, source: string) => {
+			const diagnostic = new vscode.Diagnostic(range, finding.message);
+			diagnostic.source = source;
+			diagnostic.code = 'a';
+
+			return provider.provideCodeActions(createDocument(fileName), range, {
+				diagnostics: [diagnostic],
+				only: undefined,
+				triggerKind: vscode.CodeActionTriggerKind.Automatic,
+			});
+		};
+
+		test('offers actions for pkgsense diagnostics in package.json', () => {
+			const actions = provide('/app/package.json', CONSTANTS.DIAGNOSTIC_SOURCE);
+
+			assert.strictEqual(actions?.length, 1);
+		});
+
+		test('offers nothing in other JSON files', () => {
+			const actions = provide(
+				'/app/tsconfig.json',
 				CONSTANTS.DIAGNOSTIC_SOURCE,
 			);
-			const context = createMockContext([diagnostic]);
 
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
-
-			// Assert
 			assert.strictEqual(actions, undefined);
 		});
 
-		test('should not provide actions for other JSON files', () => {
-			// Arrange
-			const document = createMockDocument('/test/config.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'Error',
-				vscode.DiagnosticSeverity.Error,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
+		test('offers nothing for diagnostics of other extensions', () => {
+			assert.strictEqual(provide('/app/package.json', 'eslint'), undefined);
+		});
+
+		test('offers nothing without diagnostics', () => {
+			const actions = provider.provideCodeActions(
+				createDocument('/app/package.json'),
+				range,
+				{
+					diagnostics: [],
+					only: undefined,
+					triggerKind: vscode.CodeActionTriggerKind.Automatic,
+				},
 			);
-			const context = createMockContext([diagnostic]);
 
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
-
-			// Assert
 			assert.strictEqual(actions, undefined);
 		});
 	});
 
-	suite('Diagnostic Source Filtering', () => {
-		test('should provide actions only for pkgsense diagnostics', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const pkgsenseDiag = createMockDiagnostic(
-				'duplicate',
-				vscode.DiagnosticSeverity.Warning,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			const otherDiag = createMockDiagnostic(
-				'duplicate',
-				vscode.DiagnosticSeverity.Warning,
-				'other-extension',
-			);
-			const context = createMockContext([pkgsenseDiag, otherDiag]);
+	suite('Duplicate dependencies', () => {
+		test('offers to remove the devDependencies copy only', async () => {
+			const findings = await findingsOf(createHeuristicsAnalyzer(), {
+				dependencies: { lodash: '^4.17.21' },
+				devDependencies: { lodash: '^4.17.21' },
+			});
 
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
+			const { document, actions } = actionsFor(findings, /^Duplicate/);
 
-			// Assert
-			assert.ok(actions);
-			assert.strictEqual(actions.length, 1);
-		});
-
-		test('should return undefined when no pkgsense diagnostics', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'Error',
-				vscode.DiagnosticSeverity.Error,
-				'other-extension',
-			);
-			const context = createMockContext([diagnostic]);
-
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
-
-			// Assert
-			assert.strictEqual(actions, undefined);
-		});
-	});
-
-	suite('Deprecated Package Actions', () => {
-		test('should create remove action for deprecated packages', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'Deprecated package',
-				vscode.DiagnosticSeverity.Warning,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			diagnostic.tags = [vscode.DiagnosticTag.Deprecated];
-			diagnostic.code = 'moment';
-			const context = createMockContext([diagnostic]);
-
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
-
-			// Assert
-			assert.ok(actions);
-			assert.strictEqual(actions.length, 1);
-			assert.strictEqual(actions[0].title, 'Remove deprecated dependency');
-			assert.strictEqual(actions[0].kind, vscode.CodeActionKind.QuickFix);
-			assert.strictEqual(actions[0].isPreferred, true);
-			assert.ok(actions[0].command);
-			assert.strictEqual(
-				actions[0].command.command,
-				'pkgsense.removeDependency',
-			);
-			assert.deepStrictEqual(actions[0].command.arguments, [
-				document.uri,
-				'moment',
+			assert.deepStrictEqual(describe(actions), [
+				{
+					title: 'Remove duplicate from devDependencies',
+					command: 'pkgsense.removeDependency',
+					arguments: ['lodash', 'devDependencies'],
+				},
 			]);
-		});
-
-		test('should handle deprecated without package code', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'Deprecated',
-				vscode.DiagnosticSeverity.Warning,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			diagnostic.tags = [vscode.DiagnosticTag.Deprecated];
-			const context = createMockContext([diagnostic]);
-
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
-
-			// Assert
-			assert.ok(actions);
-			assert.strictEqual(actions.length, 1);
-			// Command is not set when packageName is undefined
-			assert.strictEqual(actions[0].command, undefined);
-		});
-	});
-
-	suite('Duplicate Dependency Actions', () => {
-		test('should create remove action for duplicate dependencies', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'duplicate dependency found',
-				vscode.DiagnosticSeverity.Warning,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			diagnostic.code = 'lodash';
-			const context = createMockContext([diagnostic]);
-
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
-
-			// Assert
-			assert.ok(actions);
-			assert.strictEqual(actions.length, 1);
-			assert.strictEqual(actions[0].title, 'Remove duplicate dependency');
-			assert.strictEqual(actions[0].kind, vscode.CodeActionKind.QuickFix);
-			assert.ok(actions[0].command);
 			assert.strictEqual(
-				actions[0].command.command,
-				'pkgsense.removeDependency',
+				String(actions[0].command?.arguments?.[0]),
+				String(document.uri),
 			);
 		});
 	});
 
-	suite('Outdated Dependency Actions', () => {
-		test('should create update action for outdated dependencies', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'update available for react',
-				vscode.DiagnosticSeverity.Information,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			diagnostic.code = 'react';
-			const context = createMockContext([diagnostic]);
+	suite('Updates', () => {
+		test('offers the update and does not offer to remove the dependency', async () => {
+			const findings = await findingsOf(updateAnalyzer('18.3.1'), {
+				dependencies: { react: '^17.0.2' },
+			});
 
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
+			const { actions } = actionsFor(findings, /update available/);
 
-			// Assert
-			assert.ok(actions);
-			assert.strictEqual(actions.length, 1);
-			assert.strictEqual(actions[0].title, 'Update to latest version');
-			assert.strictEqual(actions[0].kind, vscode.CodeActionKind.QuickFix);
-			assert.strictEqual(actions[0].isPreferred, true);
-			assert.ok(actions[0].command);
-			assert.strictEqual(
-				actions[0].command.command,
-				'pkgsense.updateDependency',
-			);
-			assert.deepStrictEqual(actions[0].command.arguments, [
-				document.uri,
-				'react',
+			assert.deepStrictEqual(describe(actions), [
+				{
+					title: 'Update to latest version',
+					command: 'pkgsense.updateDependency',
+					arguments: ['react'],
+				},
 			]);
-		});
-	});
-
-	suite('Missing Metadata Actions', () => {
-		test('should create add action for missing description', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			// Must contain 'missing' (lowercase) to trigger action AND 'Missing' (capital M) for regex
-			const diagnostic = createMockDiagnostic(
-				"missing recommended field - Missing 'description'",
-				vscode.DiagnosticSeverity.Information,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			const context = createMockContext([diagnostic]);
-
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
-
-			// Assert
-			assert.ok(actions);
-			assert.strictEqual(actions.length, 1);
-			assert.strictEqual(actions[0].title, 'Add missing field');
-			assert.ok(actions[0].command);
-			assert.strictEqual(
-				actions[0].command.command,
-				'pkgsense.addMetadataField',
-			);
-			assert.deepStrictEqual(actions[0].command.arguments, [
-				document.uri,
-				'description',
-			]);
-		});
-
-		test('should extract field name from various message formats', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			// Must contain 'missing' (lowercase) to trigger action AND 'Missing' (capital M) for regex
-			const diagnostic = createMockDiagnostic(
-				"missing - Missing 'author' field",
-				vscode.DiagnosticSeverity.Information,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			const context = createMockContext([diagnostic]);
-
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
-
-			// Assert
-			assert.ok(actions);
-			assert.strictEqual(actions.length, 1);
-			assert.strictEqual(actions[0].command?.arguments?.[1], 'author');
-		});
-
-		test('should use default field name when pattern not matched', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'missing something',
-				vscode.DiagnosticSeverity.Information,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			const context = createMockContext([diagnostic]);
-
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
-
-			// Assert
-			assert.ok(actions);
-			assert.strictEqual(actions[0].command?.arguments?.[1], 'field');
-		});
-	});
-
-	suite('Vulnerability Actions', () => {
-		test('should create fix action for vulnerabilities', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'Critical vulnerability detected',
-				vscode.DiagnosticSeverity.Error,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			diagnostic.code = 'vulnerable-pkg';
-			const context = createMockContext([diagnostic]);
-
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
-
-			// Assert
-			assert.ok(actions);
-			assert.strictEqual(actions.length, 1);
-			assert.strictEqual(actions[0].title, 'Fix vulnerability');
-			assert.strictEqual(actions[0].kind, vscode.CodeActionKind.QuickFix);
 			assert.strictEqual(actions[0].isPreferred, true);
-			assert.ok(actions[0].command);
-			assert.strictEqual(
-				actions[0].command.command,
-				'pkgsense.fixVulnerability',
-			);
-		});
-
-		test('should only create vulnerability action for errors', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'vulnerability warning',
-				vscode.DiagnosticSeverity.Warning,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			const context = createMockContext([diagnostic]);
-
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
-
-			// Assert - no vulnerability action for non-error
-			assert.strictEqual(actions, undefined);
 		});
 	});
 
-	suite('Multiple Actions', () => {
-		test('should create multiple actions for multiple diagnostics', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diag1 = createMockDiagnostic(
-				'duplicate',
-				vscode.DiagnosticSeverity.Warning,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			const diag2 = createMockDiagnostic(
-				'update available',
-				vscode.DiagnosticSeverity.Information,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			const context = createMockContext([diag1, diag2]);
+	suite('Deprecated packages', () => {
+		test('links to the deprecation notice instead of removing the package', async () => {
+			const analyzer = updateAnalyzer('2.88.2', {
+				version: '2.88.2',
+				message: 'request has been deprecated',
+			});
+			const findings = await findingsOf(analyzer, {
+				dependencies: { request: '^2.88.0' },
+			});
 
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
+			const { actions } = actionsFor(findings, /^Deprecated on npm/);
 
-			// Assert
-			assert.ok(actions);
-			assert.strictEqual(actions.length, 2);
+			assert.deepStrictEqual(
+				actions.map((a) => ({
+					title: a.title,
+					command: a.command?.command,
+					target: String(a.command?.arguments?.[0]),
+				})),
+				[
+					{
+						title: 'View deprecation notice on npm',
+						command: 'vscode.open',
+						target: 'https://www.npmjs.com/package/request/v/2.88.2',
+					},
+				],
+			);
 		});
 
-		test('should handle diagnostic with multiple matching patterns', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'duplicate and update available',
-				vscode.DiagnosticSeverity.Warning,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
-			);
-			diagnostic.code = 'pkg';
-			const context = createMockContext([diagnostic]);
+		test('does not offer to remove a package that is only in maintenance mode', async () => {
+			const findings = await findingsOf(createHeuristicsAnalyzer(), {
+				dependencies: { moment: '^2.30.1' },
+			});
 
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
+			const { actions } = actionsFor(findings, /^Maintenance-mode/);
 
-			// Assert - both duplicate and update actions
-			assert.ok(actions);
-			assert.strictEqual(actions.length, 2);
+			assert.deepStrictEqual(actions, []);
 		});
 	});
 
-	suite('Edge Cases', () => {
-		test('should handle empty diagnostics array', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const context = createMockContext([]);
+	suite('Missing fields', () => {
+		test('offers to add each recommended metadata field that is missing', async () => {
+			const findings = await findingsOf(createMetadataAnalyzer(), {
+				name: 'app',
+				version: '1.0.0',
+			});
 
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
+			const { actions } = actionsFor(findings, /^Missing "/);
 
-			// Assert
-			assert.strictEqual(actions, undefined);
+			assert.deepStrictEqual(
+				describe(actions)
+					.map((a) => a.arguments?.[0])
+					.sort(),
+				[...CONSTANTS.RECOMMENDED_METADATA_FIELDS].sort(),
+			);
+			for (const action of actions) {
+				const field = action.command?.arguments?.[1];
+				assert.strictEqual(action.title, `Add missing "${field}" field`);
+				assert.strictEqual(
+					action.command?.command,
+					'pkgsense.addMetadataField',
+				);
+			}
 		});
 
-		test('should attach correct diagnostic to each action', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'duplicate',
-				vscode.DiagnosticSeverity.Warning,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
+		test('does not offer to add fields that have no sensible default', async () => {
+			const findings = await findingsOf(createHeuristicsAnalyzer(), {
+				name: 'app',
+			});
+
+			const { actions } = actionsFor(
+				findings,
+				/^(Missing "(files|type)"|No tests configured)/,
 			);
-			const context = createMockContext([diagnostic]);
 
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
-
-			// Assert
-			assert.ok(actions);
-			assert.ok(actions[0].diagnostics);
-			assert.strictEqual(actions[0].diagnostics.length, 1);
-			assert.strictEqual(actions[0].diagnostics[0], diagnostic);
+			assert.deepStrictEqual(actions, []);
 		});
+	});
 
-		test('should handle diagnostic without code', () => {
-			// Arrange
-			const document = createMockDocument('/test/package.json');
-			const range = new vscode.Range(0, 0, 0, 10);
-			const diagnostic = createMockDiagnostic(
-				'duplicate',
-				vscode.DiagnosticSeverity.Warning,
-				CONSTANTS.DIAGNOSTIC_SOURCE,
+	suite('Vulnerabilities', () => {
+		const parseReport = (stdout: string, deps: string[]): Finding[] => {
+			const result = parseAuditOutput(stdout, deps, 'npm');
+			assert.ok(result.success, 'the report should parse');
+			return result.data;
+		};
+
+		const report = (severity: string) =>
+			JSON.stringify({
+				vulnerabilities: {
+					lodash: {
+						name: 'lodash',
+						severity,
+						via: [
+							{
+								source: 1,
+								title: 'Prototype Pollution in lodash',
+								url: 'https://github.com/advisories/GHSA-p6mc-m468-83gw',
+								severity,
+							},
+						],
+					},
+					express: { name: 'express', severity, via: ['qs'] },
+					qs: { name: 'qs', severity, via: [{ source: 2, severity }] },
+				},
+			});
+
+		for (const severity of ['high', 'moderate']) {
+			test(`offers a fix for a ${severity} advisory`, () => {
+				const findings = parseReport(report(severity), ['lodash']);
+
+				const { actions } = actionsFor(findings, /^Vulnerability in lodash/);
+
+				assert.deepStrictEqual(describe(actions), [
+					{
+						title: 'Fix vulnerability',
+						command: 'pkgsense.fixVulnerability',
+						arguments: ['lodash', true],
+					},
+				]);
+			});
+		}
+
+		test('targets the direct dependency for a transitive vulnerability and marks it as indirect', () => {
+			const findings = parseReport(report('high'), ['express']);
+
+			const { actions } = actionsFor(
+				findings,
+				/^Vulnerability in dependencies/,
 			);
-			const context = createMockContext([diagnostic]);
 
-			// Act
-			const actions = provider.provideCodeActions(document, range, context);
+			assert.deepStrictEqual(
+				describe(actions).map((a) => a.arguments),
+				[['express', false]],
+			);
+		});
+	});
 
-			// Assert - action created but with undefined package name
-			assert.ok(actions);
-			assert.strictEqual(actions[0].command?.arguments?.[1], undefined);
+	suite('Findings without a quick fix', () => {
+		test('offers nothing for a heavy package', async () => {
+			const analyzer = createWeightAnalyzer({
+				fetchPackageSize: async () =>
+					success({ size: 3 * 1024 * 1024, gzip: 1024, version: '1.0.0' }),
+			});
+			const findings = await findingsOf(analyzer, {
+				dependencies: { heavy: '^1.0.0' },
+			});
+
+			const { actions } = actionsFor(findings, /^Very heavy package/);
+
+			assert.deepStrictEqual(actions, []);
 		});
 	});
 });
-
-// Helper functions
-function createMockDocument(fileName: string): vscode.TextDocument {
-	return {
-		uri: vscode.Uri.file(fileName),
-		fileName: fileName,
-		isUntitled: false,
-		languageId: 'json',
-		version: 1,
-		isDirty: false,
-		isClosed: false,
-		save: async () => true,
-		eol: vscode.EndOfLine.LF,
-		lineCount: 10,
-		lineAt: () => ({}) as vscode.TextLine,
-		offsetAt: () => 0,
-		positionAt: () => new vscode.Position(0, 0),
-		getText: () => '{}',
-		getWordRangeAtPosition: () => undefined,
-		validateRange: (range: vscode.Range) => range,
-		validatePosition: (pos: vscode.Position) => pos,
-	} as unknown as vscode.TextDocument;
-}
-
-function createMockDiagnostic(
-	message: string,
-	severity: vscode.DiagnosticSeverity,
-	source: string,
-): vscode.Diagnostic {
-	const diagnostic = new vscode.Diagnostic(
-		new vscode.Range(0, 0, 0, 10),
-		message,
-		severity,
-	);
-	diagnostic.source = source;
-	return diagnostic;
-}
-
-function createMockContext(
-	diagnostics: vscode.Diagnostic[],
-): vscode.CodeActionContext {
-	return {
-		diagnostics,
-		only: undefined,
-		triggerKind: vscode.CodeActionTriggerKind.Automatic,
-	};
-}

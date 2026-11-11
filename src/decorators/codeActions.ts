@@ -1,6 +1,36 @@
 import * as vscode from 'vscode';
 import { CONSTANTS } from '../shared/constants';
-import { FINDING_TAGS } from '../types';
+
+const DUPLICATE_MESSAGE = /^Duplicate dependency/;
+const UPDATE_MESSAGE = /update available/;
+const MISSING_FIELD_MESSAGE = /^Missing "(\w+)" field/;
+const VULNERABILITY_MESSAGE = /^Vulnerability in /;
+const TRANSITIVE_VULNERABILITY_MESSAGE = /^Vulnerability in dependencies of /;
+
+const ADDABLE_FIELDS: ReadonlySet<string> = new Set(
+	CONSTANTS.RECOMMENDED_METADATA_FIELDS,
+);
+
+/**
+ * Dependency a diagnostic refers to. The code is either the bare name or
+ * a { value, target } pair when the diagnostic links to its evidence.
+ */
+function getDependencyName(diagnostic: vscode.Diagnostic): string | undefined {
+	const { code } = diagnostic;
+
+	if (typeof code === 'object' && code !== null) {
+		return String(code.value);
+	}
+
+	return code?.toString();
+}
+
+function getEvidenceLink(
+	diagnostic: vscode.Diagnostic,
+): vscode.Uri | undefined {
+	const { code } = diagnostic;
+	return typeof code === 'object' && code !== null ? code.target : undefined;
+}
 
 /**
  * Provides code actions (quick fixes) for package.json diagnostics.
@@ -62,60 +92,54 @@ export class PackageCodeActionProvider implements vscode.CodeActionProvider {
 	): vscode.CodeAction[] {
 		const actions: vscode.CodeAction[] = [];
 
-		// Handle deprecated packages
-		if (diagnostic.tags?.includes(vscode.DiagnosticTag.Deprecated)) {
-			actions.push(this.createRemoveDeprecatedAction(document, diagnostic));
+		// Removing a deprecated dependency does not replace what it provides, so
+		// the only action is reading the notice, which usually names a successor
+		const notice = getEvidenceLink(diagnostic);
+		if (diagnostic.tags?.includes(vscode.DiagnosticTag.Deprecated) && notice) {
+			actions.push(this.createViewDeprecationAction(diagnostic, notice));
 		}
 
 		// Handle duplicate dependencies
-		if (diagnostic.message.includes('duplicate')) {
+		if (DUPLICATE_MESSAGE.test(diagnostic.message)) {
 			actions.push(this.createRemoveDuplicateAction(document, diagnostic));
 		}
 
 		// Handle outdated dependencies
-		if (diagnostic.message.includes('update available')) {
+		if (UPDATE_MESSAGE.test(diagnostic.message)) {
 			actions.push(this.createUpdateDependencyAction(document, diagnostic));
 		}
 
 		// Handle missing metadata
-		if (diagnostic.message.includes('missing')) {
-			actions.push(this.createAddMetadataAction(document, diagnostic));
+		const missingField = MISSING_FIELD_MESSAGE.exec(diagnostic.message)?.[1];
+		if (missingField && ADDABLE_FIELDS.has(missingField)) {
+			actions.push(
+				this.createAddMetadataAction(document, diagnostic, missingField),
+			);
 		}
 
 		// Handle vulnerabilities
-		if (
-			diagnostic.severity === vscode.DiagnosticSeverity.Error &&
-			diagnostic.message.toLowerCase().includes('vulnerability')
-		) {
+		if (VULNERABILITY_MESSAGE.test(diagnostic.message)) {
 			actions.push(this.createFixVulnerabilityAction(document, diagnostic));
 		}
 
 		return actions;
 	}
 
-	/**
-	 * Create action to remove a deprecated dependency.
-	 */
-	private createRemoveDeprecatedAction(
-		document: vscode.TextDocument,
+	private createViewDeprecationAction(
 		diagnostic: vscode.Diagnostic,
+		notice: vscode.Uri,
 	): vscode.CodeAction {
 		const action = new vscode.CodeAction(
-			'Remove deprecated dependency',
+			'View deprecation notice on npm',
 			vscode.CodeActionKind.QuickFix,
 		);
 
 		action.diagnostics = [diagnostic];
-		action.isPreferred = true;
-
-		const packageName = diagnostic.code?.toString();
-		if (packageName) {
-			action.command = {
-				title: 'Remove deprecated dependency',
-				command: 'pkgsense.removeDependency',
-				arguments: [document.uri, packageName],
-			};
-		}
+		action.command = {
+			title: 'View deprecation notice on npm',
+			command: 'vscode.open',
+			arguments: [notice],
+		};
 
 		return action;
 	}
@@ -128,18 +152,20 @@ export class PackageCodeActionProvider implements vscode.CodeActionProvider {
 		diagnostic: vscode.Diagnostic,
 	): vscode.CodeAction {
 		const action = new vscode.CodeAction(
-			'Remove duplicate dependency',
+			'Remove duplicate from devDependencies',
 			vscode.CodeActionKind.QuickFix,
 		);
 
 		action.diagnostics = [diagnostic];
 
-		const packageName = diagnostic.code?.toString();
+		const packageName = getDependencyName(diagnostic);
 		if (packageName) {
 			action.command = {
 				title: 'Remove duplicate',
 				command: 'pkgsense.removeDependency',
-				arguments: [document.uri, packageName],
+				// The entry in "dependencies" is the one that takes effect, so the
+				// devDependencies copy is the redundant one
+				arguments: [document.uri, packageName, 'devDependencies'],
 			};
 		}
 
@@ -161,7 +187,7 @@ export class PackageCodeActionProvider implements vscode.CodeActionProvider {
 		action.diagnostics = [diagnostic];
 		action.isPreferred = true;
 
-		const packageName = diagnostic.code?.toString();
+		const packageName = getDependencyName(diagnostic);
 		if (packageName) {
 			action.command = {
 				title: 'Update dependency',
@@ -179,17 +205,14 @@ export class PackageCodeActionProvider implements vscode.CodeActionProvider {
 	private createAddMetadataAction(
 		document: vscode.TextDocument,
 		diagnostic: vscode.Diagnostic,
+		fieldName: string,
 	): vscode.CodeAction {
 		const action = new vscode.CodeAction(
-			'Add missing field',
+			`Add missing "${fieldName}" field`,
 			vscode.CodeActionKind.QuickFix,
 		);
 
 		action.diagnostics = [diagnostic];
-
-		// Extract field name from message
-		const match = diagnostic.message.match(/Missing.*?'(\w+)'/);
-		const fieldName = match ? match[1] : 'field';
 
 		action.command = {
 			title: `Add ${fieldName}`,
@@ -215,12 +238,13 @@ export class PackageCodeActionProvider implements vscode.CodeActionProvider {
 		action.diagnostics = [diagnostic];
 		action.isPreferred = true;
 
-		const packageName = diagnostic.code?.toString();
+		const packageName = getDependencyName(diagnostic);
 		if (packageName) {
+			const direct = !TRANSITIVE_VULNERABILITY_MESSAGE.test(diagnostic.message);
 			action.command = {
 				title: 'Fix vulnerability',
 				command: 'pkgsense.fixVulnerability',
-				arguments: [document.uri, packageName],
+				arguments: [document.uri, packageName, direct],
 			};
 		}
 

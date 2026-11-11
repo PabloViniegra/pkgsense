@@ -1,3 +1,4 @@
+import * as semver from 'semver';
 import { CONSTANTS } from '../shared/constants';
 import { type Result, failure, success } from '../shared/result';
 import { FINDING_TAGS, type Finding } from '../types';
@@ -16,7 +17,7 @@ export interface LicenseAnalyzerDeps {
 	readonly fetchPackageLicense: (
 		packageName: string,
 		version?: string,
-	) => Promise<Result<string, string>>;
+	) => Promise<Result<string | null, string>>;
 }
 
 /**
@@ -29,11 +30,11 @@ const DEFAULT_DEPS: LicenseAnalyzerDeps = {
 /**
  * License Analyzer - Detects license conflicts and issues.
  *
- * Checks for:
- * - GPL/AGPL licenses mixed with permissive licenses (incompatibility)
- * - Missing license information
- * - UNLICENSED packages
- * - License conflicts between dependencies
+ * Checks production dependencies for:
+ * - Strong copyleft licenses (GPL/AGPL) and conflicts with the package license
+ * - Dependencies declared UNLICENSED
+ * - Dependencies that publish no license
+ * - Dependencies whose license could not be looked up (one summary finding)
  *
  * Uses NPM registry API to fetch license information for dependencies.
  *
@@ -47,41 +48,78 @@ const DEFAULT_DEPS: LicenseAnalyzerDeps = {
  * ```
  */
 
+interface LicenseLookup {
+	/** License per dependency; null when the resolved version publishes none */
+	readonly licenses: Map<string, string | null>;
+	/** Dependencies the registry could not answer for, with the reason */
+	readonly failures: Map<string, string>;
+}
+const STRONG_COPYLEFT_ID = /^A?GPL/i;
+
 /**
- * Checks if two licenses are incompatible.
+ * Splits an SPDX expression into its OR alternatives, each a list of license ids.
+ * "(MIT OR GPL-3.0-only)" → [["MIT"], ["GPL-3.0-only"]]
  */
-function areIncompatible(license1: string, license2: string): boolean {
-	// Normalize license strings (remove version numbers, spaces)
-	const norm1 = license1.toUpperCase().replace(/[-._ ]/g, '');
-	const norm2 = license2.toUpperCase().replace(/[-._ ]/g, '');
-
-	for (const [lic1, lic2] of CONSTANTS.INCOMPATIBLE_LICENSE_PAIRS) {
-		const normPair1 = lic1.toUpperCase().replace(/[-._ ]/g, '');
-		const normPair2 = lic2.toUpperCase().replace(/[-._ ]/g, '');
-
-		// Check both directions
-		if (
-			(norm1 === normPair1 && norm2 === normPair2) ||
-			(norm1 === normPair2 && norm2 === normPair1)
-		) {
-			return true;
-		}
-	}
-
-	return false;
+function licenseAlternatives(expression: string): string[][] {
+	return expression
+		.replace(/[()]/g, ' ')
+		.split(/\s+OR\s+/i)
+		.map((alternative) =>
+			alternative
+				.split(/\s+AND\s+/i)
+				.map((id) => id.replace(/\s+WITH\s+.*$/i, '').trim())
+				.filter((id) => id.length > 0),
+		)
+		.filter((alternative) => alternative.length > 0);
 }
 
 /**
- * Categorizes a license as copyleft or permissive.
+ * A dependency is strong copyleft only when every licensing option it offers
+ * is GPL/AGPL. Dual licenses such as "(MIT OR GPL-3.0)" let you pick MIT, and
+ * LGPL does not extend to code that merely links the library.
  */
-function isCopyleftLicense(license: string): boolean {
-	const normalized = license.toUpperCase().replace(/[-._ ]/g, '');
+function isStrongCopyleft(license: string): boolean {
+	const alternatives = licenseAlternatives(license);
 
 	return (
-		normalized.includes('GPL') ||
-		normalized.includes('AGPL') ||
-		normalized.includes('LGPL')
+		alternatives.length > 0 &&
+		alternatives.every((ids) => ids.some((id) => STRONG_COPYLEFT_ID.test(id)))
 	);
+}
+
+function normalizeLicenseId(id: string): string {
+	return id
+		.toUpperCase()
+		.replace(/-(ONLY|OR-LATER)$/, '')
+		.replace(/\+$/, '')
+		.replace(/[-._ ]/g, '');
+}
+
+/**
+ * Checks if two license ids are a known incompatible pair.
+ */
+function areIncompatible(license1: string, license2: string): boolean {
+	const norm1 = normalizeLicenseId(license1);
+	const norm2 = normalizeLicenseId(license2);
+
+	return CONSTANTS.INCOMPATIBLE_LICENSE_PAIRS.some(([lic1, lic2]) => {
+		const normPair1 = normalizeLicenseId(lic1);
+		const normPair2 = normalizeLicenseId(lic2);
+
+		return (
+			(norm1 === normPair1 && norm2 === normPair2) ||
+			(norm1 === normPair2 && norm2 === normPair1)
+		);
+	});
+}
+
+function conflictsWithPackageLicense(
+	packageLicense: string,
+	dependencyLicense: string,
+): boolean {
+	return licenseAlternatives(dependencyLicense)
+		.flat()
+		.some((id) => areIncompatible(packageLicense, id));
 }
 
 /**
@@ -92,116 +130,122 @@ function createFetchDependencyLicenses(
 	fetchLicense: LicenseAnalyzerDeps['fetchPackageLicense'],
 ) {
 	return async function fetchDependencyLicenses(
-		dependencies: Record<string, string>,
-	): Promise<Map<string, string>> {
-		const licenses = new Map<string, string>();
+		dependencies: Readonly<Record<string, string>>,
+	): Promise<LicenseLookup> {
+		const licenses = new Map<string, string | null>();
+		const failures = new Map<string, string>();
 
-		// Fetch licenses in batches to respect rate limiting
-		const entries = Object.entries(dependencies);
+		for (const [packageName, spec] of Object.entries(dependencies)) {
+			// workspace:, file:, git URLs and aliases are not on the registry
+			if (!semver.validRange(spec)) {
+				continue;
+			}
 
-		for (const [packageName, version] of entries) {
-			const result = await fetchLicense(packageName, version);
-
+			const result = await fetchLicense(packageName, spec);
 			if (result.success) {
 				licenses.set(packageName, result.data);
 			} else {
-				// If we can't fetch license, mark as unknown
-				licenses.set(packageName, 'UNKNOWN');
+				console.warn(
+					`License lookup failed for ${packageName}: ${result.error}`,
+				);
+				failures.set(packageName, result.error);
 			}
 		}
 
-		return licenses;
+		return { licenses, failures };
+	};
+}
+
+function createCopyleftFinding(
+	packageName: string,
+	license: string,
+	packageLicense: string | undefined,
+): Finding | null {
+	// A copyleft package depending on copyleft code is the expected case
+	if (packageLicense && isStrongCopyleft(packageLicense)) {
+		return null;
+	}
+
+	const conflict =
+		packageLicense !== undefined &&
+		conflictsWithPackageLicense(packageLicense, license);
+
+	const message = conflict
+		? `License conflict: "${packageName}" is licensed ${license} (strong copyleft), which is incompatible with distributing your package under ${packageLicense}.`
+		: `Strong copyleft dependency: "${packageName}" is licensed ${license}. Distributing your package with it requires complying with that license.`;
+
+	return {
+		type: 'warning',
+		message,
+		dependency: packageName,
+		tags: [FINDING_TAGS.LICENSE],
+		meta: { license, url: `https://www.npmjs.com/package/${packageName}` },
+	};
+}
+
+function checkLicense(
+	packageName: string,
+	license: string | null,
+	packageLicense: string | undefined,
+): Finding | null {
+	const evidence = { url: `https://www.npmjs.com/package/${packageName}` };
+
+	if (license === null) {
+		return {
+			type: 'info',
+			message: `"${packageName}" publishes no license information. Manual verification recommended.`,
+			dependency: packageName,
+			tags: [FINDING_TAGS.LICENSE],
+			meta: evidence,
+		};
+	}
+
+	if (license === 'UNLICENSED') {
+		return {
+			type: 'warning',
+			message: `"${packageName}" is declared UNLICENSED: its author grants no usage rights.`,
+			dependency: packageName,
+			tags: [FINDING_TAGS.LICENSE],
+			meta: { license, ...evidence },
+		};
+	}
+
+	return isStrongCopyleft(license)
+		? createCopyleftFinding(packageName, license, packageLicense)
+		: null;
+}
+
+function createLookupFailureFinding(failures: Map<string, string>): Finding {
+	const names = [...failures.keys()];
+	const [firstError] = failures.values();
+
+	return {
+		type: 'info',
+		message: `Could not check the license of ${names.length} ${names.length === 1 ? 'dependency' : 'dependencies'} (${names.join(', ')}): ${firstError}`,
+		location: ['dependencies'],
+		tags: [FINDING_TAGS.LICENSE],
+		meta: { packages: names },
 	};
 }
 
 /**
- * Checks for license conflicts between dependencies.
+ * Checks the licenses of production dependencies against the package license.
  */
-function checkLicenseConflicts(
-	licenses: Map<string, string>,
+function checkDependencyLicenses(
+	{ licenses, failures }: LicenseLookup,
 	packageLicense?: string,
 ): Finding[] {
 	const findings: Finding[] = [];
 
-	// If package has no license, warn
-	if (!packageLicense) {
-		findings.push({
-			type: 'warning',
-			message: 'Package has no license. This may cause legal issues for users.',
-			tags: [FINDING_TAGS.LICENSE, FINDING_TAGS.PACKAGING],
-		});
-	}
-
-	// Check for UNLICENSED
-	if (packageLicense === 'UNLICENSED') {
-		findings.push({
-			type: 'warning',
-			message:
-				'Package is marked as UNLICENSED. Consider using a standard open-source license.',
-			tags: [FINDING_TAGS.LICENSE, FINDING_TAGS.PACKAGING],
-		});
-	}
-
-	// Check for GPL/AGPL in dependencies
-	const copyleftDeps: string[] = [];
-	const permissiveDeps: string[] = [];
-
-	for (const [packageName, license] of licenses.entries()) {
-		if (license === 'UNKNOWN') {
-			findings.push({
-				type: 'info',
-				message: `Could not determine license for "${packageName}". Manual verification recommended.`,
-				dependency: packageName,
-				tags: [FINDING_TAGS.LICENSE],
-			});
-			continue;
-		}
-
-		if (isCopyleftLicense(license)) {
-			copyleftDeps.push(packageName);
-		} else {
-			permissiveDeps.push(packageName);
+	for (const [packageName, license] of licenses) {
+		const finding = checkLicense(packageName, license, packageLicense);
+		if (finding) {
+			findings.push(finding);
 		}
 	}
 
-	// Warn about copyleft dependencies
-	if (copyleftDeps.length > 0) {
-		findings.push({
-			type: 'warning',
-			message: `Copyleft licenses detected (GPL/AGPL): ${copyleftDeps.join(', ')}. These may require you to open-source your code.`,
-			tags: [FINDING_TAGS.LICENSE, FINDING_TAGS.SECURITY],
-			meta: {
-				copyleftDependencies: copyleftDeps,
-			},
-		});
-	}
-
-	// Check for specific incompatibilities
-	if (packageLicense && copyleftDeps.length > 0) {
-		for (const dep of copyleftDeps) {
-			const depLicense = licenses.get(dep);
-			if (depLicense && areIncompatible(packageLicense, depLicense)) {
-				findings.push({
-					type: 'error',
-					message: `License conflict: Your package license (${packageLicense}) is incompatible with dependency "${dep}" (${depLicense}).`,
-					dependency: dep,
-					tags: [FINDING_TAGS.LICENSE, FINDING_TAGS.SECURITY],
-				});
-			}
-		}
-	}
-
-	// Warn about UNLICENSED dependencies
-	const unlicensedDeps = Array.from(licenses.entries())
-		.filter(([_, license]) => license === 'UNLICENSED')
-		.map(([name, _]) => name);
-
-	if (unlicensedDeps.length > 0) {
-		findings.push({
-			type: 'warning',
-			message: `Dependencies without license: ${unlicensedDeps.join(', ')}. Use with caution.`,
-			tags: [FINDING_TAGS.LICENSE, FINDING_TAGS.SECURITY],
-		});
+	if (failures.size > 0) {
+		findings.push(createLookupFailureFinding(failures));
 	}
 
 	return findings;
@@ -220,21 +264,21 @@ function createAnalyze(deps: LicenseAnalyzerDeps) {
 	): Promise<Result<Finding[], AnalyzerError>> {
 		const findings: Finding[] = [];
 		const pkg = context.packageJson;
+		// Dev dependencies are not distributed with the package, so their
+		// licenses place no obligations on it
+		const dependencies = pkg.dependencies ?? {};
 
-		// Skip if no dependencies
-		if (
-			!context.allDependencies ||
-			Object.keys(context.allDependencies).length === 0
-		) {
+		if (Object.keys(dependencies).length === 0) {
 			return success(findings);
 		}
 
 		try {
-			// Fetch licenses for all dependencies
-			const licenses = await fetchDependencyLicenses(context.allDependencies);
+			const lookup = await fetchDependencyLicenses(dependencies);
 
-			// Check for conflicts
-			findings.push(...checkLicenseConflicts(licenses, pkg.license));
+			const packageLicense =
+				typeof pkg.license === 'string' ? pkg.license : undefined;
+
+			findings.push(...checkDependencyLicenses(lookup, packageLicense));
 
 			return success(findings);
 		} catch (error) {
@@ -266,8 +310,3 @@ export function createLicenseAnalyzer(
 		analyze: createAnalyze(deps),
 	};
 }
-
-/**
- * Default LicenseAnalyzer instance.
- */
-export const licenseAnalyzer = createLicenseAnalyzer();

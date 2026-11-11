@@ -1,295 +1,182 @@
 import * as assert from 'node:assert';
-import { suite, test } from 'mocha';
+import { suite, teardown, test } from 'mocha';
+import * as sinon from 'sinon';
 import { fetchBundlephobia } from '../../utils/bundlephobia';
+import {
+	type FakeFetch,
+	type FakeResponse,
+	stubFetch,
+} from '../helpers/fakeFetch';
+
+const SIZE_API = 'https://bundlephobia.com/api/size?package=';
 
 suite('Bundlephobia Utility Test Suite', () => {
+	teardown(() => {
+		sinon.restore();
+	});
+
+	const urlOf = (pkg: string) => SIZE_API + encodeURIComponent(pkg);
+
+	/** Makes the API answer for exactly one package specifier. */
+	const answer = (pkg: string, response: FakeResponse | Error): FakeFetch =>
+		stubFetch({ [urlOf(pkg)]: response });
+
+	const sizes = { body: { size: 1, gzip: 1 } };
+
 	suite('Package Name Validation', () => {
-		test('should reject empty package name', async () => {
-			const result = await fetchBundlephobia('', '1.0.0');
+		const invalid: [label: string, name: unknown, error: string][] = [
+			['an empty name', '', 'must be a non-empty string'],
+			['a whitespace-only name', '   ', 'cannot be empty'],
+			['invalid characters', 'invalid@#$%', 'contains invalid characters'],
+			['a path instead of a name', '../../etc/passwd', 'invalid characters'],
+			['a name over 214 characters', 'a'.repeat(215), 'exceeds maximum length'],
+			['null', null, 'must be a non-empty string'],
+			['a number', 123, 'must be a non-empty string'],
+		];
 
-			assert.strictEqual(result.success, false);
-			if (!result.success) {
-				assert.ok(result.error.includes('empty'));
-			}
-		});
+		for (const [label, name, error] of invalid) {
+			test(`rejects ${label} without calling the API`, async () => {
+				const api = stubFetch({});
 
-		test('should reject whitespace-only package name', async () => {
-			const result = await fetchBundlephobia('   ', '1.0.0');
-
-			assert.strictEqual(result.success, false);
-			if (!result.success) {
-				assert.ok(result.error.includes('empty'));
-			}
-		});
-
-		test('should reject package name with invalid characters', async () => {
-			const result = await fetchBundlephobia('invalid@#$%', '1.0.0');
-
-			assert.strictEqual(result.success, false);
-			if (!result.success) {
-				assert.ok(result.error.includes('invalid characters'));
-			}
-		});
-
-		test('should reject package name exceeding max length', async () => {
-			const longName = 'a'.repeat(215);
-			const result = await fetchBundlephobia(longName, '1.0.0');
-
-			assert.strictEqual(result.success, false);
-			if (!result.success) {
-				assert.ok(result.error.includes('maximum length'));
-			}
-		});
-
-		test('should accept valid simple package names', async function () {
-			this.timeout(60000); // Increase timeout for network calls
-
-			const validNames = [
-				'lodash',
-				'express',
-				'react',
-				'my-package',
-				'package.name',
-				'package_name',
-			];
-
-			for (const name of validNames) {
+				// @ts-expect-error callers reading untyped JSON may pass anything
 				const result = await fetchBundlephobia(name, '1.0.0');
-				// Should pass validation regardless of network success/failure
+
+				assert.strictEqual(result.success, false);
 				if (!result.success) {
-					assert.ok(
-						!result.error.includes('Invalid package name'),
-						`${name} should not have validation error, got: ${result.error}`,
-					);
-				} else {
-					// If successful, data should be valid
-					assert.ok(typeof result.data.size === 'number');
-					assert.ok(typeof result.data.gzip === 'number');
+					assert.ok(result.error.startsWith('Invalid package name'));
+					assert.ok(result.error.includes(error), result.error);
 				}
-			}
-		});
+				assert.deepStrictEqual(api.requested, []);
+			});
+		}
 
-		test('should accept valid scoped package names', async () => {
-			const validNames = [
-				'@babel/core',
-				'@types/node',
-				'@scope/package-name',
-				'@org/my.package',
-			];
+		test('trims the package name', async () => {
+			const api = answer('lodash@4.17.21', sizes);
 
-			for (const name of validNames) {
-				const result = await fetchBundlephobia(name, '1.0.0');
-				// Should pass validation regardless of network success/failure
-				if (!result.success) {
-					assert.ok(
-						!result.error.includes('Invalid package name'),
-						`${name} should not have validation error, got: ${result.error}`,
-					);
-				} else {
-					// If successful, data should be valid
-					assert.ok(typeof result.data.size === 'number');
-					assert.ok(typeof result.data.gzip === 'number');
-				}
-			}
-		}).timeout(10000);
+			const result = await fetchBundlephobia('  lodash  ', '4.17.21');
 
-		test('should trim package names', async () => {
-			const result = await fetchBundlephobia('  lodash  ', '1.0.0');
-
-			// Should pass validation (trimmed), network result may vary
-			if (!result.success) {
-				assert.ok(
-					!result.error.includes('Invalid package name'),
-					`Should not have validation error, got: ${result.error}`,
-				);
-			} else {
-				assert.ok(typeof result.data.size === 'number');
-				assert.ok(typeof result.data.gzip === 'number');
-			}
+			assert.ok(result.success);
+			assert.deepStrictEqual(api.requested, [urlOf('lodash@4.17.21')]);
 		});
 	});
 
-	suite('Version Sanitization', () => {
-		test('should handle caret versions', async () => {
-			const result = await fetchBundlephobia('lodash', '^4.17.0');
+	suite('Requested version', () => {
+		const specs: [label: string, spec: string, requested: string][] = [
+			['an exact version', '4.17.21', 'lodash@4.17.21'],
+			['a caret range, unchanged', '^4.17.0', 'lodash@^4.17.0'],
+			['a tilde range, unchanged', '~4.17.0', 'lodash@~4.17.0'],
+			[
+				'a compound range, unchanged',
+				'>=4.0.0 <5.0.0',
+				'lodash@>=4.0.0 <5.0.0',
+			],
+			['latest for an empty version', '', 'lodash@latest'],
+			['latest for a non-version specifier', 'workspace:', 'lodash@latest'],
+		];
 
-			// Network result may vary, but should not fail on validation
-			if (!result.success) {
-				assert.ok(
-					!result.error.includes('Invalid package name'),
-					`Should not have validation error, got: ${result.error}`,
-				);
-			}
-		});
+		for (const [label, spec, requested] of specs) {
+			test(`asks for ${label}`, async () => {
+				const api = answer(requested, sizes);
 
-		test('should handle tilde versions', async () => {
-			const result = await fetchBundlephobia('lodash', '~4.17.0');
+				const result = await fetchBundlephobia('lodash', spec);
 
-			// Network result may vary
-			if (!result.success) {
-				assert.ok(!result.error.includes('Invalid package name'));
-			}
-		});
+				assert.ok(result.success);
+				assert.deepStrictEqual(api.requested, [urlOf(requested)]);
+			});
+		}
 
-		test('should handle exact versions', async () => {
-			const result = await fetchBundlephobia('lodash', '4.17.21');
+		test('asks for scoped packages by their full name', async () => {
+			const api = answer('@babel/core@^7.24.0', sizes);
 
-			// Network result may vary
-			if (!result.success) {
-				assert.ok(!result.error.includes('Invalid package name'));
-			}
-		});
+			const result = await fetchBundlephobia('@babel/core', '^7.24.0');
 
-		test('should handle empty version as latest', async () => {
-			const result = await fetchBundlephobia('lodash', '');
-
-			// Network result may vary
-			if (!result.success) {
-				assert.ok(!result.error.includes('Invalid package name'));
-			}
-		});
-
-		test('should handle version ranges', async () => {
-			const result = await fetchBundlephobia('lodash', '>=4.0.0 <5.0.0');
-
-			// Network result may vary
-			if (!result.success) {
-				assert.ok(!result.error.includes('Invalid package name'));
-			}
+			assert.ok(result.success);
+			assert.deepStrictEqual(api.requested, [
+				'https://bundlephobia.com/api/size?package=%40babel%2Fcore%40%5E7.24.0',
+			]);
 		});
 	});
 
-	suite('Error Handling', () => {
-		test('should handle network errors gracefully', async () => {
-			const result = await fetchBundlephobia(
-				'nonexistent-package-xyz-123',
-				'1.0.0',
-			);
+	suite('Response', () => {
+		test('returns the sizes and the version that was measured', async () => {
+			answer('react@^18.2.0', {
+				body: {
+					name: 'react',
+					version: '18.3.1',
+					size: 7654,
+					gzip: 2987,
+					dependencyCount: 1,
+				},
+			});
 
-			assert.strictEqual(result.success, false);
-			if (!result.success) {
-				assert.ok(result.error.length > 0);
-			}
+			const result = await fetchBundlephobia('react', '^18.2.0');
+
+			assert.deepStrictEqual(result, {
+				success: true,
+				data: { size: 7654, gzip: 2987, version: '18.3.1' },
+			});
 		});
 
-		test('should handle timeout', async () => {
-			// This test uses a real network call, so it's not ideal
-			// In a production environment, we'd mock the fetch
-			const result = await fetchBundlephobia('lodash', '4.17.21');
+		test('omits the version when the API does not return one', async () => {
+			answer('react@18.3.1', { body: { size: 7654, gzip: 2987 } });
 
-			// Should complete (success or fail) within reasonable time
-			assert.ok(result.success === true || result.success === false);
+			const result = await fetchBundlephobia('react', '18.3.1');
+
+			assert.deepStrictEqual(result, {
+				success: true,
+				data: { size: 7654, gzip: 2987 },
+			});
+		});
+
+		test('rejects a body without sizes', async () => {
+			answer('react@18.3.1', { body: { error: { code: 'BuildError' } } });
+
+			const result = await fetchBundlephobia('react', '18.3.1');
+
+			assert.deepStrictEqual(result, {
+				success: false,
+				error: 'Invalid response format from Bundlephobia for react',
+			});
+		});
+
+		test('rejects sizes that are not numbers', async () => {
+			answer('react@18.3.1', { body: { size: '7654', gzip: 2987 } });
+
+			const result = await fetchBundlephobia('react', '18.3.1');
+
+			assert.strictEqual(result.success, false);
 		});
 	});
 
-	suite('Response Validation', () => {
-		test('should validate response structure', async () => {
-			// This test would ideally use a mock, but we'll test the real API
-			const result = await fetchBundlephobia('lodash', '4.17.21');
+	suite('Failures', () => {
+		test('reports the HTTP status for a package Bundlephobia cannot find', async () => {
+			answer('no-such-package@1.0.0', {
+				status: 404,
+				body: { error: 'PackageNotFound' },
+			});
 
-			if (result.success) {
-				assert.ok(typeof result.data.size === 'number');
-				assert.ok(typeof result.data.gzip === 'number');
-				assert.ok(result.data.size >= 0);
-				assert.ok(result.data.gzip >= 0);
-			}
-		});
-	});
-
-	suite('URL Encoding', () => {
-		test('should properly encode scoped packages', async () => {
-			const result = await fetchBundlephobia('@types/node', '18.0.0');
-
-			// Should not fail on encoding issues
-			assert.strictEqual(result.success, false);
-			if (!result.success) {
-				assert.ok(!result.error.includes('Invalid package name'));
-			}
-		});
-
-		test('should handle packages with dots', async () => {
-			const result = await fetchBundlephobia('lodash.debounce', '1.0.0');
+			const result = await fetchBundlephobia('no-such-package', '1.0.0');
 
 			assert.strictEqual(result.success, false);
 			if (!result.success) {
-				assert.ok(!result.error.includes('Invalid package name'));
-			}
-		});
-	});
-
-	suite('Edge Cases', () => {
-		test('should handle null as package name', async () => {
-			const result = await fetchBundlephobia(
-				null as unknown as string,
-				'1.0.0',
-			);
-
-			assert.strictEqual(result.success, false);
-			if (!result.success) {
-				assert.ok(result.error.includes('Invalid package name'));
+				assert.ok(result.error.startsWith('HTTP 404'), result.error);
+				assert.ok(result.error.endsWith('for package no-such-package@1.0.0'));
 			}
 		});
 
-		test('should handle undefined as package name', async () => {
-			const result = await fetchBundlephobia(
-				undefined as unknown as string,
-				'1.0.0',
-			);
+		test('reports a network error instead of throwing', async () => {
+			answer('react@18.3.1', new Error('getaddrinfo ENOTFOUND'));
 
-			assert.strictEqual(result.success, false);
-			if (!result.success) {
-				assert.ok(result.error.includes('Invalid package name'));
-			}
-		});
-
-		test('should handle number as package name', async () => {
-			const result = await fetchBundlephobia(123 as unknown as string, '1.0.0');
-
-			assert.strictEqual(result.success, false);
-			if (!result.success) {
-				assert.ok(result.error.includes('Invalid package name'));
-			}
-		});
-
-		test('should handle object as package name', async () => {
-			const result = await fetchBundlephobia({} as unknown as string, '1.0.0');
-
-			assert.strictEqual(result.success, false);
-			if (!result.success) {
-				assert.ok(result.error.includes('Invalid package name'));
-			}
-		});
-	});
-
-	suite('Real API Integration', () => {
-		test('should fetch real package data for lodash', async () => {
-			const result = await fetchBundlephobia('lodash', '4.17.21');
-
-			if (result.success) {
-				assert.ok(result.data.size > 0, 'Size should be greater than 0');
-				assert.ok(result.data.gzip > 0, 'Gzip size should be greater than 0');
-				assert.ok(
-					result.data.size > result.data.gzip,
-					'Size should be greater than gzip size',
-				);
-			} else {
-				// Network might be unavailable, that's acceptable
-				console.warn(`Skipped real API test: ${result.error}`);
-			}
-		}).timeout(10000);
-
-		test('should handle 404 for non-existent package', async () => {
-			const result = await fetchBundlephobia(
-				'this-package-definitely-does-not-exist-xyz-123',
-				'1.0.0',
-			);
+			const result = await fetchBundlephobia('react', '18.3.1');
 
 			assert.strictEqual(result.success, false);
 			if (!result.success) {
 				assert.ok(
-					result.error.includes('HTTP') || result.error.includes('Error'),
+					result.error ===
+						'Error fetching bundlephobia data for react: getaddrinfo ENOTFOUND',
+					result.error,
 				);
 			}
-		}).timeout(10000);
+		});
 	});
 });

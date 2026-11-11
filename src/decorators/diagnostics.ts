@@ -84,7 +84,8 @@ export class DiagnosticsManager {
 
 			const d = new vscode.Diagnostic(range, message, sev);
 			d.source = CONSTANTS.DIAGNOSTIC_SOURCE;
-			if (f.dependency) d.code = f.dependency;
+			const code = this.createDiagnosticCode(f);
+			if (code) d.code = code;
 
 			// Enhanced color coding with tags
 			d.tags = this.computeDiagnosticTags(f);
@@ -109,11 +110,8 @@ export class DiagnosticsManager {
 
 		if (!finding.tags) return tags;
 
-		// Check for replacement/maintenance patterns (deprecated packages)
-		if (
-			finding.tags.includes('replacement') ||
-			finding.tags.includes('maintenance')
-		) {
+		// Only packages that should be replaced are struck through
+		if (finding.tags.includes('replacement')) {
 			tags.push(vscode.DiagnosticTag.Deprecated);
 		}
 
@@ -123,6 +121,23 @@ export class DiagnosticsManager {
 		}
 
 		return tags;
+	}
+
+	/**
+	 * Diagnostic code: the dependency name, linking to the evidence for the
+	 * finding (advisory, npm page, Bundlephobia report) when there is one.
+	 */
+	private createDiagnosticCode(finding: Finding): vscode.Diagnostic['code'] {
+		const url = finding.meta?.['url'];
+
+		if (typeof url === 'string') {
+			return {
+				value: finding.dependency ?? 'details',
+				target: vscode.Uri.parse(url),
+			};
+		}
+
+		return finding.dependency;
 	}
 
 	/**

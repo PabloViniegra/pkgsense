@@ -9,7 +9,6 @@ suite('MetadataAnalyzer Test Suite', () => {
 	const createContext = (packageJson: PackageJson): AnalysisContext => ({
 		packageJson,
 		allDependencies: {},
-		dependencyRanges: {},
 		workspacePath: '/test',
 	});
 
@@ -458,10 +457,14 @@ suite('MetadataAnalyzer Test Suite', () => {
 			assert.strictEqual(result.success, true);
 			if (result.success) {
 				const findings = result.data.filter((f) =>
-					f.message.includes('unlicensed'),
+					f.message.includes('UNLICENSED'),
 				);
 				assert.strictEqual(findings.length, 1);
-				assert.strictEqual(findings[0].type, 'warning');
+				assert.strictEqual(findings[0].type, 'info');
+				assert.strictEqual(
+					findings[0].message,
+					'Package is marked UNLICENSED: nobody is granted the right to use it. Use an SPDX license identifier if it is meant to be open source.',
+				);
 			}
 		});
 
@@ -536,6 +539,33 @@ suite('MetadataAnalyzer Test Suite', () => {
 				assert.ok(findings.some((f) => f.message.includes('repository')));
 				assert.ok(findings.some((f) => f.message.includes('keywords')));
 			}
+		});
+	});
+
+	suite('Private packages', () => {
+		test('reports nothing for a private package, which is never published', async () => {
+			const analyzer = createMetadataAnalyzer();
+
+			const result = await analyzer.analyze(
+				createContext({ name: 'internal-app', private: true }),
+			);
+
+			assert.deepStrictEqual(result, { success: true, data: [] });
+		});
+
+		test('still checks a package that sets private to false', async () => {
+			const analyzer = createMetadataAnalyzer();
+
+			const result = await analyzer.analyze(
+				createContext({ name: 'lib', private: false }),
+			);
+
+			assert.ok(result.success);
+			assert.ok(
+				result.data.some((f) =>
+					f.message.startsWith('Missing "license" field'),
+				),
+			);
 		});
 	});
 });

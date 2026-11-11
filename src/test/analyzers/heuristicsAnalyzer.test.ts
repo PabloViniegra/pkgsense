@@ -12,90 +12,55 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 	): AnalysisContext => ({
 		packageJson,
 		allDependencies,
-		dependencyRanges: {},
 		workspacePath: '/test',
 	});
 
-	suite('Deprecated Packages Detection', () => {
-		test('should detect moment as deprecated', async () => {
-			const analyzer = createHeuristicsAnalyzer();
-			const context = createContext({}, { moment: '^2.29.0' });
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const findings = result.data;
-				const deprecatedFindings = findings.filter((f) =>
-					f.message.includes('Deprecated dependency'),
-				);
-				assert.strictEqual(deprecatedFindings.length, 1);
-				assert.strictEqual(deprecatedFindings[0].type, 'warning');
-				assert.ok(deprecatedFindings[0].message.includes('moment'));
-				assert.ok(deprecatedFindings[0].message.includes('dayjs or luxon'));
-				assert.strictEqual(deprecatedFindings[0].dependency, 'moment');
-				assert.ok(
-					deprecatedFindings[0].tags?.includes(FINDING_TAGS.MAINTENANCE),
-				);
-			}
-		});
-
-		test('should detect request as deprecated', async () => {
-			const analyzer = createHeuristicsAnalyzer();
-			const context = createContext({}, { request: '^2.88.0' });
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const findings = result.data;
-				const deprecatedFindings = findings.filter((f) =>
-					f.message.includes('Deprecated dependency'),
-				);
-				assert.strictEqual(deprecatedFindings.length, 1);
-				assert.ok(deprecatedFindings[0].message.includes('request'));
-				assert.ok(deprecatedFindings[0].message.includes('fetch or axios'));
-			}
-		});
-
-		test('should detect left-pad as unnecessary', async () => {
-			const analyzer = createHeuristicsAnalyzer();
-			const context = createContext({}, { 'left-pad': '^1.3.0' });
-
-			const result = await analyzer.analyze(context);
-
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const findings = result.data;
-				const deprecatedFindings = findings.filter((f) =>
-					f.message.includes('Deprecated dependency'),
-				);
-				assert.strictEqual(deprecatedFindings.length, 1);
-				assert.ok(deprecatedFindings[0].message.includes('left-pad'));
-			}
-		});
-
-		test('should detect multiple deprecated packages', async () => {
-			const analyzer = createHeuristicsAnalyzer();
-			const context = createContext(
-				{},
-				{
-					moment: '^2.29.0',
-					request: '^2.88.0',
-					'left-pad': '^1.3.0',
-				},
+	suite('Maintenance-mode packages', () => {
+		const analyzeDependencies = async (
+			allDependencies: Record<string, string>,
+		) => {
+			const result = await createHeuristicsAnalyzer().analyze(
+				createContext(
+					{ private: true, type: 'module', scripts: { test: 'mocha' } },
+					allDependencies,
+				),
 			);
 
-			const result = await analyzer.analyze(context);
+			assert.ok(result.success, 'analysis should succeed');
+			return result.data;
+		};
 
-			assert.strictEqual(result.success, true);
-			if (result.success) {
-				const findings = result.data;
-				const deprecatedFindings = findings.filter((f) =>
-					f.message.includes('Deprecated dependency'),
-				);
-				assert.strictEqual(deprecatedFindings.length, 3);
-			}
+		test('notes moment as maintenance mode, citing the project status page', async () => {
+			const findings = await analyzeDependencies({ moment: '^2.29.0' });
+
+			assert.strictEqual(findings.length, 1);
+			assert.strictEqual(findings[0].type, 'info');
+			assert.strictEqual(
+				findings[0].message,
+				'Maintenance-mode dependency: moment is in maintenance mode (no new features). Consider dayjs or luxon.',
+			);
+			assert.strictEqual(findings[0].dependency, 'moment');
+			assert.deepStrictEqual(findings[0].tags, [FINDING_TAGS.MAINTENANCE]);
+			assert.strictEqual(
+				findings[0].meta?.['url'],
+				'https://momentjs.com/docs/#/-project-status/',
+			);
+		});
+
+		test('does not call moment deprecated or mark it for replacement', async () => {
+			const [finding] = await analyzeDependencies({ moment: '^2.29.0' });
+
+			assert.ok(!/deprecated/i.test(finding.message));
+			assert.ok(!finding.tags?.includes(FINDING_TAGS.REPLACEMENT));
+		});
+
+		test('leaves npm deprecations to the registry notice instead of a hardcoded list', async () => {
+			const findings = await analyzeDependencies({
+				request: '^2.88.0',
+				'left-pad': '^1.3.0',
+			});
+
+			assert.deepStrictEqual(findings, []);
 		});
 
 		test('should not flag non-deprecated packages', async () => {
@@ -138,6 +103,10 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 				);
 				assert.strictEqual(duplicateFindings.length, 1);
 				assert.strictEqual(duplicateFindings[0].dependency, 'typescript');
+				assert.deepStrictEqual(duplicateFindings[0].location, [
+					'devDependencies',
+					'typescript',
+				]);
 				assert.ok(
 					duplicateFindings[0].tags?.includes(FINDING_TAGS.DUPLICATION),
 				);
@@ -422,6 +391,31 @@ suite('HeuristicsAnalyzer Test Suite', () => {
 				const findings = result.data;
 				assert.ok(findings.length >= 4);
 			}
+		});
+	});
+
+	suite('Private packages', () => {
+		const filesFindings = async (packageJson: PackageJson) => {
+			const result = await createHeuristicsAnalyzer().analyze(
+				createContext(packageJson),
+			);
+
+			assert.ok(result.success, 'analysis should succeed');
+			return result.data.filter((f) => f.message.includes('"files"'));
+		};
+
+		test('does not ask a private package for a "files" field', async () => {
+			assert.deepStrictEqual(await filesFindings({ private: true }), []);
+		});
+
+		test('asks a publishable package for a "files" field', async () => {
+			const findings = await filesFindings({ name: 'lib' });
+
+			assert.strictEqual(findings.length, 1);
+			assert.strictEqual(
+				findings[0].message,
+				'Missing "files" field. Adding it reduces the published package size.',
+			);
 		});
 	});
 });
